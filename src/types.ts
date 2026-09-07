@@ -1,24 +1,64 @@
 import { WorkspaceId, SubWorkspaceId, ModuleId, AIEngineId } from "./data/workspaceRegistry";
 import { LanguageMode } from "./lib/languageContext";
+import { LegalDomainId } from "./data/legalDomainPacks";
+
+export type { LegalDomainId } from "./data/legalDomainPacks";
+
+export interface MultiDomainClassification {
+  primaryDomain: LegalDomainId | string;
+  primaryDomainTitle?: string;
+  secondaryDomains: (LegalDomainId | string)[];
+  secondaryDomainTitles?: string[];
+  proceduralDomains?: string[];
+  crossCuttingIssues?: string[];
+  confidenceScore: number; // 0-100
+  isProvisional: boolean; // Triage is provisional; re-evaluable upon new facts/docs
+  triageClarifications?: string[]; // Questions if AI is uncertain
+  triageReasoning?: string;
+}
+
+export interface CrossLawInteraction {
+  statutesInvolved: string[];
+  interactionType: "Harmonious / Complementary" | "Conflict (Non-Obstante Override)" | "Concurrent Jurisdiction" | "Sequential Bar / Pre-requisite" | string;
+  analysis: string;
+  operationalRule: string;
+}
+
+export interface IssueDecompositionItem {
+  issueNumber: number;
+  title: string;
+  domain: LegalDomainId | string;
+  applicableStatutes: string[];
+  coreQuestion: string;
+  factualBasis: string;
+  recommendedForum: string;
+  primaFacieStrength?: "Strong" | "Moderate" | "Weak";
+}
 
 export interface IntakeData {
-  workspace?: WorkspaceId; // "Citizen360" | "Professional360" | "Enterprise360" | "Government360" | "Industry360"
-  subWorkspace?: SubWorkspaceId; // "Property360" | "Legal360"
-  module?: ModuleId; // "Registration", "Revenue", "Survey", "Municipal", "Criminal360", etc.
-  engine?: AIEngineId; // "CaseClassificationAI", "DocumentVerificationAI", "PrecedentIntelligenceAI", "StrategySimulatorAI", etc.
+  workspace?: WorkspaceId;
+  subWorkspace?: SubWorkspaceId;
+  module?: ModuleId;
+  engine?: AIEngineId;
   clientName: string;
   mobile: string;
+  location?: string;
+  district: string;
+  state?: string;
+  oppositeParty: string;
+  partyRelationship?: string;
+  courtOrForum?: string;
+  existingAdvocate: string;
+  existingCaseNumber: string; // FIR No / Notice Ref / Case No
+  limitationRisk: string;
+  selectedModel?: string;
+  primaryDomain?: LegalDomainId | string;
+  activeDomainPacks?: (LegalDomainId | string)[];
+  domainMetadata?: Record<string, any>;
+  // Legacy & Domain-specific fields for backward compatibility
   surveyNumber?: string;
   village?: string;
   taluk?: string;
-  district: string;
-  oppositeParty: string;
-  partyRelationship?: string; // e.g. Plaintiff/Defendant, Complainant/Accused, Employer/Employee, Buyer/Seller, Husband/Wife
-  courtOrForum?: string; // e.g. District Court, Consumer Commission, Cyber Crime Police Station, High Court
-  existingAdvocate: string;
-  existingCaseNumber: string; // or FIR Number / Notice Ref
-  limitationRisk: string;
-  selectedModel?: string;
 }
 
 export interface Stage1Data {
@@ -352,6 +392,12 @@ export interface PropertyCase {
   immediateAction: ImmediateAction;
   servicePackage: ServicePackage;
   customDocumentDraft: CustomDocumentDraft;
+  multiDomainClassification?: MultiDomainClassification;
+  issueDecomposition?: IssueDecompositionItem[];
+  crossLawInteractions?: CrossLawInteraction[];
+  primaryDomain?: LegalDomainId | string;
+  activeDomainPacks?: (LegalDomainId | string)[];
+  domainMetadata?: Record<string, any>;
   languageMode?: LanguageMode;
   selectedModel?: string;
   translatedVariants?: {
@@ -363,6 +409,8 @@ export interface PropertyCase {
   updates?: CaseUpdateEvent[];
   versions?: CaseAnalysisVersion[];
 }
+
+export type LegalCase = PropertyCase;
 
 export interface SavedCaseBrief {
   id: string;

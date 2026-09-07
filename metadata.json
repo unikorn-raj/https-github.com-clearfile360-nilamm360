@@ -1,6 +1,6 @@
 {
-  "name": "Remix Remix Remix Remix Copy of Unikorn360 Property Case Solving System",
-  "description": "An advanced property dispute resolution and workspace framework for Tamil Nadu land and registration matters.",
+  "name": "Unikorn360 Legal360 AI Case Solving System",
+  "description": "A universal multi-domain legal reasoning system powered by modular domain packs and cross-law synthesis.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

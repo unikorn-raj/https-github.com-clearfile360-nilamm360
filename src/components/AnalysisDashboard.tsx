@@ -310,14 +310,18 @@ export function AnalysisDashboard({ caseData, onUpdateCase }: AnalysisDashboardP
               <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("கைபேசி எண்", "Mobile Number")}</span>
               <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{caseData.stage0?.mobile || "N/A"}</span>
             </div>
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
-              <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("சர்வே எண்", "Survey Number")}</span>
-              <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{caseData.stage0?.surveyNumber || "N/A"}</span>
-            </div>
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
-              <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("கிராமம் & வட்டம் (தாலுகா)", "Village & Taluk")}</span>
-              <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] [word-break:normal] block">{caseData.stage0?.village}, {caseData.stage0?.taluk}</span>
-            </div>
+            {caseData.stage0?.surveyNumber && caseData.stage0.surveyNumber !== "N/A" && (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("சர்வே எண்", "Survey Number")}</span>
+                <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{caseData.stage0?.surveyNumber}</span>
+              </div>
+            )}
+            {caseData.stage0?.village && caseData.stage0.village !== "N/A" && (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("கிராமம் & வட்டம் (தாலுகா)", "Village & Taluk")}</span>
+                <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] [word-break:normal] block">{caseData.stage0?.village}, {caseData.stage0?.taluk}</span>
+              </div>
+            )}
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
               <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("மாவட்டம்", "District")}</span>
               <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{caseData.stage0?.district}</span>
@@ -344,6 +348,174 @@ export function AnalysisDashboard({ caseData, onUpdateCase }: AnalysisDashboardP
             </div>
           </div>
         </div>
+
+        {/* Multi-Domain Classification & Triage Banner */}
+        {caseData.multiDomainClassification && (
+          <div className="bg-purple-950 text-white rounded-xl p-5 shadow-xs space-y-4 border border-purple-800">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-purple-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Gavel className="h-4 w-4 text-purple-300" />
+                <h4 className="text-xs font-black uppercase tracking-wider text-purple-100">
+                  {t("பல்துறை சட்ட வகைப்பாடு (Multi-Domain Classification)", "Multi-Domain Legal Classification")}
+                </h4>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold bg-purple-900 text-purple-200 border border-purple-700 px-2 py-0.5 rounded">
+                  Status: {caseData.multiDomainClassification.isProvisional ? "Provisional Triage" : "Confirmed"}
+                </span>
+                <span className="text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700 px-2 py-0.5 rounded">
+                  Confidence: {caseData.multiDomainClassification.confidenceScore}%
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div className="p-3 bg-purple-900/60 rounded-xl border border-purple-800">
+                <span className="text-[9px] font-bold text-purple-300 uppercase block mb-1">
+                  {t("முதன்மை சட்டக் களம்", "Primary Legal Domain")}
+                </span>
+                <span className="font-extrabold text-sm text-white block">
+                  {caseData.multiDomainClassification.primaryDomainTitle || caseData.multiDomainClassification.primaryDomain}
+                </span>
+              </div>
+
+              <div className="p-3 bg-purple-900/60 rounded-xl border border-purple-800">
+                <span className="text-[9px] font-bold text-purple-300 uppercase block mb-1">
+                  {t("இரண்டாம் நிலை களங்கள்", "Secondary Legal Domains")}
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {caseData.multiDomainClassification.secondaryDomains?.length ? (
+                    caseData.multiDomainClassification.secondaryDomains.map((dom, idx) => (
+                      <span key={idx} className="px-1.5 py-0.5 bg-purple-800/80 text-purple-200 text-[10px] font-bold rounded border border-purple-700">
+                        {caseData.multiDomainClassification?.secondaryDomainTitles?.[idx] || dom}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-purple-300 text-[11px]">—</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-3 bg-purple-900/60 rounded-xl border border-purple-800">
+                <span className="text-[9px] font-bold text-purple-300 uppercase block mb-1">
+                  {t("நடைமுறை & பல்துறை கூறுகள்", "Procedural & Cross-Cutting")}
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {caseData.multiDomainClassification.proceduralDomains?.map((pDom, idx) => (
+                    <span key={idx} className="px-1.5 py-0.5 bg-indigo-900/80 text-indigo-200 text-[10px] font-bold rounded border border-indigo-700">
+                      {pDom}
+                    </span>
+                  ))}
+                  {caseData.multiDomainClassification.crossCuttingIssues?.map((cIssue, idx) => (
+                    <span key={idx} className="px-1.5 py-0.5 bg-amber-950/80 text-amber-200 text-[10px] font-bold rounded border border-amber-800">
+                      {cIssue}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {caseData.multiDomainClassification.triageReasoning && (
+              <p className="text-[11px] text-purple-200 italic font-medium bg-purple-900/40 p-2.5 rounded-lg border border-purple-800/60">
+                "{caseData.multiDomainClassification.triageReasoning}"
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Multi-Domain Issue Decomposition */}
+        {caseData.issueDecomposition && caseData.issueDecomposition.length > 0 && (
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4 min-w-0">
+            <div className="flex items-center gap-2 pb-3 border-b border-slate-200">
+              <span className="w-1.5 h-3.5 bg-purple-700 rounded mr-1"></span>
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                {t("பல்துறை சட்டப் பிரச்சினைகள் பகுப்பாய்வு (Issue Decomposition)", "Multi-Domain Legal Issue Decomposition")}
+              </h4>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-purple-50 text-purple-950 font-bold border-b border-purple-200">
+                    <th className="p-2.5 rounded-tl-lg">#</th>
+                    <th className="p-2.5">{t("சட்டப் பிரச்சினை", "Legal Issue")}</th>
+                    <th className="p-2.5">{t("களம்", "Domain")}</th>
+                    <th className="p-2.5">{t("பிரிவுகள் & சட்டங்கள்", "Statutes & Sections")}</th>
+                    <th className="p-2.5">{t("நீதிமன்றம் / ஆணையம்", "Forum / Authority")}</th>
+                    <th className="p-2.5 rounded-tr-lg">{t("ஆதார வலிமை", "Strength")}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {caseData.issueDecomposition.map((issue) => (
+                    <tr key={issue.issueNumber} className="hover:bg-slate-50 transition">
+                      <td className="p-2.5 font-bold text-purple-900">{issue.issueNumber}</td>
+                      <td className="p-2.5 font-semibold text-slate-900 max-w-xs">
+                        <div>{issue.title}</div>
+                        {issue.coreQuestion && (
+                          <div className="text-[10px] text-slate-500 font-normal mt-0.5">{issue.coreQuestion}</div>
+                        )}
+                      </td>
+                      <td className="p-2.5">
+                        <span className="px-2 py-0.5 bg-purple-100 text-purple-900 text-[10px] font-bold rounded">
+                          {issue.domain}
+                        </span>
+                      </td>
+                      <td className="p-2.5 text-slate-700 text-[11px]">
+                        {issue.applicableStatutes?.join(", ")}
+                      </td>
+                      <td className="p-2.5 text-slate-700 text-[11px] font-medium">{issue.recommendedForum}</td>
+                      <td className="p-2.5">
+                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                          issue.primaFacieStrength === "Strong"
+                            ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                            : issue.primaFacieStrength === "Weak"
+                            ? "bg-rose-100 text-rose-800 border border-rose-300"
+                            : "bg-slate-100 text-slate-700"
+                        }`}>
+                          {issue.primaFacieStrength || "Moderate"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Cross-Law Interactions & Conflict Resolution */}
+        {caseData.crossLawInteractions && caseData.crossLawInteractions.length > 0 && (
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4 min-w-0">
+            <div className="flex items-center gap-2 pb-3 border-b border-slate-200">
+              <span className="w-1.5 h-3.5 bg-indigo-700 rounded mr-1"></span>
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                {t("சட்டங்களுக்கிடையேயான தொடர்பு & முரண்பாடு தீர்வு (Cross-Law Resolver)", "Cross-Law Interactions & Statutory Harmony")}
+              </h4>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {caseData.crossLawInteractions.map((item, idx) => (
+                <div key={idx} className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-indigo-900 bg-indigo-100 px-2 py-0.5 rounded border border-indigo-300">
+                      {item.interactionType}
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-600">
+                      {item.statutesInvolved?.join(" ⟷ ")}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-800 font-medium leading-relaxed">
+                    {item.analysis}
+                  </p>
+                  <div className="pt-2 border-t border-indigo-200/60 flex items-start gap-1.5 text-[11px] text-indigo-950 font-bold">
+                    <span className="text-indigo-700">⚖️ {t("செயல்முறை விதி", "Rule")}:</span>
+                    <span>{item.operationalRule}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Stage 01 & 02 Card: Category & Root Cause */}
         <div id="stage-01" className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4 min-w-0">

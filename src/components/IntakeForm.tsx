@@ -1,10 +1,19 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { TN_DISTRICTS, SAMPLE_CASES, SampleCase } from "../data/constants";
 import { IntakeData } from "../types";
-import { WorkspaceRegistry, WorkspaceId, SubWorkspaceId, ModuleId, AIEngineId, ModuleConfig } from "../data/workspaceRegistry";
+import { 
+  LEGAL_DOMAIN_PACKS, 
+  LegalDomainId, 
+  LegalDomainPack, 
+  quickTriageDomainPacks, 
+  getDomainPacksForIds 
+} from "../data/legalDomainPacks";
 import { useLanguage } from "../lib/languageContext";
 import { 
-  FileText, Sparkles, MapPin, Phone, User, Landmark, ShieldAlert, ArrowRight, CornerDownRight, CheckCircle2, Zap, Lock, Scale, Building2, Gavel, Briefcase, HeartHandshake, Shield, Cpu, HelpCircle, Compass, FileCheck, ShoppingBag, HardHat, Receipt, Building, Handshake, Layers, Layers3, ChevronRight 
+  FileText, Sparkles, MapPin, Phone, User, Landmark, ShieldAlert, ArrowRight, 
+  CheckCircle2, Zap, Lock, Scale, Building2, Gavel, Briefcase, HeartHandshake, 
+  Shield, Cpu, HelpCircle, Compass, FileCheck, ShoppingBag, HardHat, Receipt, 
+  Building, Handshake, Layers, AlertCircle, Plus, X, RefreshCw, Layers3 
 } from "lucide-react";
 
 interface IntakeFormProps {
@@ -17,18 +26,20 @@ interface IntakeFormProps {
 
 export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases = 2, onOpenPricing }: IntakeFormProps) {
   const { t } = useLanguage();
-  const [workspace, setWorkspace] = useState<WorkspaceId>("Citizen360");
 
-  const [subWorkspace, setSubWorkspace] = useState<SubWorkspaceId>("Property360");
-  const [activeModule, setActiveModule] = useState<ModuleId>("Registration");
-  const [activeEngine, setActiveEngine] = useState<AIEngineId>("CaseClassificationAI");
-  const [isAutoRouted, setIsAutoRouted] = useState(false);
+  const [rawDescription, setRawDescription] = useState("");
+  const [activeDomains, setActiveDomains] = useState<LegalDomainId[]>(["property_revenue_reg"]);
+  const [primaryDomain, setPrimaryDomain] = useState<LegalDomainId>("property_revenue_reg");
+  const [triageReasoning, setTriageReasoning] = useState<string>("");
+  const [confidenceScore, setConfidenceScore] = useState<number>(85);
+  const [isAutoTriaged, setIsAutoTriaged] = useState<boolean>(false);
+  const [domainAnswers, setDomainAnswers] = useState<Record<string, string>>({});
 
   const [intake, setIntake] = useState<IntakeData>({
     workspace: "Citizen360",
-    subWorkspace: "Property360",
-    module: "Registration",
-    engine: "CaseClassificationAI",
+    subWorkspace: "Legal360",
+    module: "UniversalLegal",
+    engine: "UniversalLegalReasoningEngine",
     clientName: "",
     mobile: "",
     surveyNumber: "",
@@ -40,53 +51,81 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
     courtOrForum: "",
     existingAdvocate: "No",
     existingCaseNumber: "",
-    limitationRisk: "No"
+    limitationRisk: "No",
+    primaryDomain: "property_revenue_reg",
+    activeDomainPacks: ["property_revenue_reg"],
+    domainMetadata: {}
   });
 
-  const [rawDescription, setRawDescription] = useState("");
-
-  const handleSubWorkspaceSwitch = (sw: SubWorkspaceId) => {
-    setSubWorkspace(sw);
-    setIsAutoRouted(false);
-    if (sw === "Property360") {
-      setActiveModule("Registration");
-      setIntake(prev => ({ 
-        ...prev, 
-        workspace: "Citizen360",
-        subWorkspace: "Property360",
-        module: "Registration",
-        engine: activeEngine
-      }));
-    } else {
-      setActiveModule("Criminal360");
-      setIntake(prev => ({ 
-        ...prev, 
-        workspace: "Citizen360",
-        subWorkspace: "Legal360",
-        module: "Criminal360",
-        engine: activeEngine
+  // Automatically perform live quick triage when user types/pastes narrative
+  const handleNarrativeChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value;
+    setRawDescription(text);
+    if (text.trim().length > 25) {
+      const triage = quickTriageDomainPacks(text);
+      setActiveDomains(triage.activeDomainPacks);
+      setPrimaryDomain(triage.primaryDomain);
+      setTriageReasoning(triage.reasoning);
+      setConfidenceScore(triage.confidenceScore);
+      setIsAutoTriaged(true);
+      setIntake(prev => ({
+        ...prev,
+        primaryDomain: triage.primaryDomain,
+        activeDomainPacks: triage.activeDomainPacks,
+        module: LEGAL_DOMAIN_PACKS[triage.primaryDomain]?.nameEn || "UniversalLegal"
       }));
     }
   };
 
-  const handleModuleSelect = (modId: ModuleId) => {
-    setActiveModule(modId);
-    setIsAutoRouted(false);
-
+  const handleManualTriageTrigger = () => {
+    if (!rawDescription.trim()) {
+      alert("தயவுசெய்து வழக்கு விபரத்தை உள்ளிடவும்.");
+      return;
+    }
+    const triage = quickTriageDomainPacks(rawDescription);
+    setActiveDomains(triage.activeDomainPacks);
+    setPrimaryDomain(triage.primaryDomain);
+    setTriageReasoning(triage.reasoning);
+    setConfidenceScore(triage.confidenceScore);
+    setIsAutoTriaged(true);
     setIntake(prev => ({
       ...prev,
-      workspace: "Citizen360",
-      subWorkspace,
-      module: modId,
-      engine: activeEngine
+      primaryDomain: triage.primaryDomain,
+      activeDomainPacks: triage.activeDomainPacks,
+      module: LEGAL_DOMAIN_PACKS[triage.primaryDomain]?.nameEn || "UniversalLegal"
     }));
   };
 
-  const handleEngineSelect = (engId: AIEngineId) => {
-    setActiveEngine(engId);
+  const toggleDomain = (domainId: LegalDomainId) => {
+    let updated: LegalDomainId[];
+    if (activeDomains.includes(domainId)) {
+      if (activeDomains.length === 1) {
+        alert("குறைந்தது ஒரு சட்டக் களம் (Domain) தேர்ந்தெடுக்கப்பட்டிருக்க வேண்டும்.");
+        return;
+      }
+      updated = activeDomains.filter(id => id !== domainId);
+      if (primaryDomain === domainId) {
+        setPrimaryDomain(updated[0]);
+      }
+    } else {
+      updated = [...activeDomains, domainId];
+    }
+    setActiveDomains(updated);
     setIntake(prev => ({
       ...prev,
-      engine: engId
+      activeDomainPacks: updated,
+      primaryDomain: updated[0]
+    }));
+  };
+
+  const handleDomainAnswerChange = (questionId: string, value: string) => {
+    setDomainAnswers(prev => ({ ...prev, [questionId]: value }));
+    setIntake(prev => ({
+      ...prev,
+      domainMetadata: {
+        ...(prev.domainMetadata || {}),
+        [questionId]: value
+      }
     }));
   };
 
@@ -95,37 +134,23 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
     setIntake(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleNarrativeChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const text = e.target.value;
-    setRawDescription(text);
-    if (text.trim().length > 15) {
-      const auto = WorkspaceRegistry.autoRouteByDescription(text);
-      if (auto) {
-        setSubWorkspace(auto.subWorkspace);
-        setActiveModule(auto.module);
-        setActiveEngine(auto.engine);
-        setIsAutoRouted(true);
-        setIntake(prev => ({
-          ...prev,
-          workspace: auto.workspace,
-          subWorkspace: auto.subWorkspace,
-          module: auto.module,
-          engine: auto.engine
-        }));
-      }
-    }
-  };
-
   const loadSampleCase = (sample: SampleCase) => {
-    const sw: SubWorkspaceId = (sample.intake.subWorkspace as SubWorkspaceId) || "Property360";
-    const mod: ModuleId = (sample.intake.module as ModuleId) || "Registration";
-    setSubWorkspace(sw);
-    setActiveModule(mod);
+    const rawText = sample.rawDescription;
+    setRawDescription(rawText);
+    
+    // Auto triage for sample case
+    const triage = quickTriageDomainPacks(rawText);
+    setActiveDomains(triage.activeDomainPacks);
+    setPrimaryDomain(triage.primaryDomain);
+    setTriageReasoning(triage.reasoning);
+    setConfidenceScore(triage.confidenceScore);
+    setIsAutoTriaged(true);
+
     setIntake({
       workspace: "Citizen360",
-      subWorkspace: sw,
-      module: mod,
-      engine: (sample.intake.engine as AIEngineId) || "CaseClassificationAI",
+      subWorkspace: "Legal360",
+      module: LEGAL_DOMAIN_PACKS[triage.primaryDomain]?.nameEn || "UniversalLegal",
+      engine: "UniversalLegalReasoningEngine",
       clientName: sample.intake.clientName,
       mobile: sample.intake.mobile,
       surveyNumber: sample.intake.surveyNumber || "",
@@ -137,9 +162,11 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
       courtOrForum: sample.intake.courtOrForum || "",
       existingAdvocate: sample.intake.existingAdvocate,
       existingCaseNumber: sample.intake.existingCaseNumber,
-      limitationRisk: sample.intake.limitationRisk
+      limitationRisk: sample.intake.limitationRisk,
+      primaryDomain: triage.primaryDomain,
+      activeDomainPacks: triage.activeDomainPacks,
+      domainMetadata: {}
     });
-    setRawDescription(sample.rawDescription);
   };
 
   const handleFormSubmit = (e: React.FormEvent) => {
@@ -152,100 +179,61 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
       if (onOpenPricing) onOpenPricing();
       return;
     }
-    onSubmit(intake, rawDescription);
+
+    // Merge active domain answers and survey details if present
+    const updatedIntake: IntakeData = {
+      ...intake,
+      primaryDomain,
+      activeDomainPacks: activeDomains,
+      domainMetadata: {
+        ...(intake.domainMetadata || {}),
+        ...domainAnswers
+      }
+    };
+
+    onSubmit(updatedIntake, rawDescription);
   };
+
+  const activePacksData = getDomainPacksForIds(activeDomains);
+  const isPropertyDomainActive = activeDomains.includes("property_revenue_reg");
 
   return (
     <div id="intake-form-container" className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col text-slate-900">
       
-      {/* 1. Header Hero with Workspace Architecture */}
+      {/* 1. Universal Header Hero */}
       <div className="p-6 border-b border-slate-200 bg-purple-900 text-white relative overflow-hidden">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <span className="px-2.5 py-0.5 bg-purple-800 text-purple-100 font-extrabold text-[10px] rounded uppercase tracking-wider border border-purple-700 flex items-center gap-1">
                 <Layers className="h-3 w-3 text-purple-300" />
-                AIEOS WORKSPACES:
+                UNIVERSAL LEGAL360 AI ENGINE
               </span>
-              {WorkspaceRegistry.WORKSPACES.map(w => {
-                const isActive = workspace === w.id;
-                return (
-                  <button
-                    key={w.id}
-                    type="button"
-                    onClick={() => {
-                      if (w.isAvailable) {
-                        setWorkspace(w.id);
-                      } else {
-                        alert(`${w.titleEn} is an upcoming workspace in the AIEOS Roadmap.`);
-                      }
-                    }}
-                    className={`px-2 py-0.5 text-[10px] font-extrabold rounded uppercase tracking-wider border transition cursor-pointer flex items-center gap-1 ${
-                      isActive
-                        ? "bg-white text-purple-950 border-white shadow-xs"
-                        : w.isAvailable
-                        ? "bg-purple-950 text-purple-200 border-purple-700 hover:text-white"
-                        : "bg-purple-950/40 text-purple-400 border-purple-800/60 opacity-60"
-                    }`}
-                  >
-                    <span>{w.titleEn}</span>
-                    {!w.isAvailable && (
-                      <span className="text-[8px] bg-purple-900 text-purple-300 px-1 py-0.1 rounded font-normal">Soon</span>
-                    )}
-                  </button>
-                );
-              })}
+              <span className="px-2 py-0.5 bg-emerald-950/80 text-emerald-300 font-bold text-[10px] rounded border border-emerald-700/60 flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                18 Modular Domain Packs Active
+              </span>
             </div>
             <h2 className="text-xl font-black text-white font-display leading-tight flex items-center gap-2">
               <Sparkles className="h-5.5 w-5.5 text-purple-200" />
-              {t("Citizen360 முதன்மை சட்ட மையம்", "Citizen360 Primary Legal Hub")}
+              {t("UNIKORN360 Universal Legal360 AI Case Solving System", "UNIKORN360 Universal Legal360 AI Case Solving System")}
             </h2>
-            <p className="text-xs text-purple-100 mt-1 max-w-2xl font-normal">
+            <p className="text-xs text-purple-100 mt-1 max-w-3xl font-normal">
               {t(
-                "சொத்து வாழ்க்கைச் சுழற்சி (Property360) மற்றும் அனைத்து சட்டத் துறை மேலாண்மை (Legal360) கொண்ட ஒருங்கிணைந்த AI சட்டத் தீர்வு தளம்.",
-                "Integrated AI resolution platform for Property Lifecycle (Property360) and All Legal Domains (Legal360)."
+                "அனைத்து சட்டத் துறைகளையும் (சிவில், கிரிமினல், சொத்து, நுகர்வோர், தொழிலாளர், கார்ப்பரேட், வங்கி, திவால், வரி, சைபர், அரசியலமைப்பு, குடும்பம்) ஒருங்கிணைத்து பகுப்பாய்வு செய்யும் பல்துறை சட்ட மையம்.",
+                "Universal Legal Reasoning Engine with Modular Domain Packs for Civil, Criminal, Property, Consumer, Labour, Corporate, Banking, Insolvency, Tax, Cyber, Family & Constitutional Law."
               )}
             </p>
           </div>
         </div>
-
-        {/* SubWorkspace Selection Tabs (Property360 vs Legal360) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-purple-950/70 p-1.5 rounded-xl border border-purple-700/50">
-          <button
-            type="button"
-            onClick={() => handleSubWorkspaceSwitch("Property360")}
-            className={`px-4 py-2.5 rounded-lg font-extrabold text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
-              subWorkspace === "Property360"
-                ? "bg-white text-purple-950 shadow-sm"
-                : "text-purple-200 hover:text-white hover:bg-purple-800/50"
-            }`}
-          >
-            <Landmark className="h-4 w-4 shrink-0" />
-            <span>{t("1. Property360 (சொத்து வாழ்க்கைச் சுழற்சி)", "1. Property360 (Land & Property Lifecycle)")}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleSubWorkspaceSwitch("Legal360")}
-            className={`px-4 py-2.5 rounded-lg font-extrabold text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
-              subWorkspace === "Legal360"
-                ? "bg-white text-purple-950 shadow-sm"
-                : "text-purple-200 hover:text-white hover:bg-purple-800/50"
-            }`}
-          >
-            <Scale className="h-4 w-4 shrink-0" />
-            <span>{t("2. Legal360 (அனைத்து சட்டத் துறை மையம்)", "2. Legal360 (All Legal Domains)")}</span>
-          </button>
-        </div>
       </div>
-
 
       {/* Sample Cases Quick Loader Bar */}
       <div className="bg-slate-50 border-b border-slate-200 px-6 py-3">
         <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 sm:pb-0">
           <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider shrink-0 flex items-center gap-1">
             <Zap className="h-3.5 w-3.5 text-amber-600" />
-            மாதிரி வழக்குகள் (Quick Loaders):
+            10 மாதிரி வழக்குகள் (Sample Cases):
           </span>
           <div className="flex items-center gap-2 shrink-0">
             {SAMPLE_CASES.map((sample, idx) => (
@@ -262,121 +250,104 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
         </div>
       </div>
 
-      {/* 2. Main Form Area */}
+      {/* Main Intake Form */}
       <form onSubmit={handleFormSubmit} className="p-6 space-y-6 bg-white">
 
-        {/* Module Selection Panel */}
-        <div className="p-4 bg-purple-50/80 border border-purple-200 rounded-xl space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="block text-xs font-bold text-purple-900 uppercase tracking-wider flex items-center gap-1.5">
-              <Gavel className="h-4 w-4 text-purple-700" />
-              <span>{subWorkspace} - பிரத்யேக தொகுதிகள் (Modules):</span>
-            </label>
-            {isAutoRouted && (
-              <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded flex items-center gap-1">
-                <Sparkles className="h-3 w-3 text-emerald-600" />
-                AI Auto-Routed Module
-              </span>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-            {subWorkspace === "Property360" && (
-              WorkspaceRegistry.PROPERTY360_MODULES.map(m => {
-                const isSelected = activeModule === m.id;
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => handleModuleSelect(m.id)}
-                    className={`p-3 text-left rounded-xl text-xs font-bold border transition flex flex-col justify-between gap-1 cursor-pointer relative ${
-                      isSelected
-                        ? "bg-purple-900 text-white border-purple-900 shadow-sm"
-                        : "bg-white text-slate-800 border-slate-200 hover:border-purple-300 hover:bg-purple-50/50"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <span className="font-extrabold text-[11px] truncate">{m.titleEn}</span>
-                      {m.badge && (
-                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${
-                          isSelected ? "bg-purple-800 text-purple-100" : "bg-purple-100 text-purple-800"
-                        }`}>
-                          {m.badge}
-                        </span>
-                      )}
-                    </div>
-                    <span className={`text-[10px] font-normal line-clamp-1 ${isSelected ? "text-purple-200" : "text-slate-500"}`}>
-                      {m.titleTa}
-                    </span>
-                  </button>
-                );
-              })
-            )}
-
-            {subWorkspace === "Legal360" && (
-              WorkspaceRegistry.LEGAL360_MODULES.map(m => {
-                const isSelected = activeModule === m.id;
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => handleModuleSelect(m.id)}
-                    className={`p-3 text-left rounded-xl text-xs font-bold border transition flex flex-col justify-between gap-1 cursor-pointer relative ${
-                      isSelected
-                        ? "bg-purple-900 text-white border-purple-900 shadow-sm"
-                        : "bg-white text-slate-800 border-slate-200 hover:border-purple-300 hover:bg-purple-50/50"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <span className="font-extrabold text-[11px] truncate">{m.titleEn}</span>
-                    </div>
-                    <span className={`text-[10px] font-normal line-clamp-1 ${isSelected ? "text-purple-200" : "text-slate-500"}`}>
-                      {m.titleTa}
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        {/* AI Engine Selection Panel */}
-        <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="block text-xs font-bold text-indigo-950 uppercase tracking-wider flex items-center gap-1.5">
-              <Cpu className="h-4 w-4 text-indigo-700" />
-              <span>
-                {activeModule === "Consumer360" 
-                  ? "Consumer360 AI Agents (7 Specialized Agents):" 
-                  : "AI Engine (இயக்க எஞ்சின்):"}
-              </span>
-            </label>
-            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 border border-indigo-300 px-2 py-0.5 rounded flex items-center gap-1">
-              <Sparkles className="h-3 w-3 text-indigo-600" />
-              {activeModule === "Consumer360" ? "7 Consumer360 Agents" : "6 Specialized Engines"}
+        {/* STEP 1: Case Narrative & AI Triage */}
+        <div className="space-y-3">
+          <div className="flex justify-between items-end border-b border-slate-200 pb-2">
+            <h3 className="text-xs font-black text-purple-900 uppercase tracking-widest flex items-center gap-1.5">
+              <span>01.</span> மூலப் பிரச்சினை & வழக்கு விபரம் (Universal Case Narrative)
+            </h3>
+            <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+              தானியங்கி பல்துறை வகைப்பாடு (Auto-Triage Active)
             </span>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
-            {(activeModule === "Consumer360" 
-              ? WorkspaceRegistry.CONSUMER360_AI_AGENTS 
-              : WorkspaceRegistry.STANDARD_AI_ENGINES
-            ).map(e => {
-              const isSelected = activeEngine === e.id;
+          <p className="text-[11px] text-slate-600 leading-normal font-medium">
+            வாடிக்கையாளரின் சிக்கல், புகார், ஆவண விபரம் அல்லது நோட்டீஸை இங்கே ஒட்டவும். தளம் தானாகவே முதன்மை மற்றும் இரண்டாம் நிலை சட்டக் களங்களை (Multi-Domain Packs) கண்டறிந்து dynamic கேள்விகளை உருவாக்கும்.
+          </p>
+
+          <div className="relative">
+            <textarea
+              value={rawDescription}
+              onChange={handleNarrativeChange}
+              rows={5}
+              required
+              placeholder="வழக்கின் முழு விபரங்களை இங்கே தட்டச்சு செய்யவும் அல்லது ஒட்டவும் (எ.கா: நில அபகரிப்பு, காசோலை மோசம், நுகர்வோர் சேவை குறைபாடு, பணி நீக்கம், ஜிஎஸ்டி நோட்டீஸ், வெளிநாட்டு முதலீடு FEMA, சொத்துரிமை தகராறு)..."
+              className="w-full p-4 text-xs font-sans text-slate-900 bg-slate-50 border border-slate-300 rounded-xl focus:border-purple-600 focus:ring-1 focus:ring-purple-600 outline-none transition leading-relaxed placeholder:text-slate-400"
+            />
+            <button
+              type="button"
+              onClick={handleManualTriageTrigger}
+              className="absolute bottom-3 right-3 px-3 py-1.5 bg-purple-900 text-white rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-purple-800 transition flex items-center gap-1 cursor-pointer shadow-xs"
+            >
+              <RefreshCw className="h-3 w-3" />
+              <span>AI Triage Run</span>
+            </button>
+          </div>
+        </div>
+
+        {/* STEP 2: Multi-Domain Triage Results & Active Domain Packs Selector */}
+        <div className="p-4 bg-purple-50/70 border border-purple-200 rounded-xl space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-purple-200/80 pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Gavel className="h-4 w-4 text-purple-800" />
+                <h4 className="text-xs font-black text-purple-950 uppercase tracking-wider">
+                  02. சட்டக் களங்கள் (Active Legal Domain Packs)
+                </h4>
+                {isAutoTriaged && (
+                  <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded">
+                    Confidence: {confidenceScore}%
+                  </span>
+                )}
+              </div>
+              {triageReasoning && (
+                <p className="text-[11px] text-purple-900 mt-1 font-medium italic">
+                  Triage Reasoning: {triageReasoning}
+                </p>
+              )}
+            </div>
+            <span className="text-[10px] text-slate-600 font-medium">
+              (தேவையான களங்களை சொடுக்கி சேர்க்கலாம்/நீக்கலாம்)
+            </span>
+          </div>
+
+          {/* Grid of 18 Modular Domain Packs */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {(Object.keys(LEGAL_DOMAIN_PACKS) as LegalDomainId[]).map((domId) => {
+              const pack = LEGAL_DOMAIN_PACKS[domId];
+              const isActive = activeDomains.includes(domId);
+              const isPrimary = primaryDomain === domId;
+
               return (
                 <button
-                  key={e.id}
+                  key={domId}
                   type="button"
-                  onClick={() => handleEngineSelect(e.id)}
-                  className={`p-2.5 text-left rounded-xl text-xs font-bold border transition flex flex-col justify-between gap-1 cursor-pointer relative ${
-                    isSelected
-                      ? "bg-indigo-950 text-white border-indigo-950 shadow-xs"
-                      : "bg-white text-slate-800 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50"
+                  onClick={() => toggleDomain(domId)}
+                  className={`p-2.5 text-left rounded-xl text-xs font-bold border transition flex flex-col justify-between gap-1.5 cursor-pointer relative ${
+                    isPrimary
+                      ? "bg-purple-950 text-white border-purple-950 shadow-xs ring-2 ring-purple-600/50"
+                      : isActive
+                      ? "bg-purple-100/80 text-purple-950 border-purple-300 font-extrabold"
+                      : "bg-white text-slate-700 border-slate-200 hover:border-purple-300 hover:bg-purple-50/40"
                   }`}
                 >
-                  <span className="font-extrabold text-[11px] truncate">{e.nameEn}</span>
-                  <span className={`text-[9.5px] font-normal line-clamp-1 ${isSelected ? "text-indigo-200" : "text-slate-500"}`}>
-                    {e.nameTa}
+                  <div className="flex items-center justify-between w-full">
+                    <span className="font-extrabold text-[11px] truncate">{pack.nameEn}</span>
+                    {isPrimary ? (
+                      <span className="text-[8px] bg-purple-800 text-purple-100 px-1.5 py-0.2 rounded font-bold">
+                        Primary
+                      </span>
+                    ) : isActive ? (
+                      <span className="text-[8px] bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-bold">
+                        Active
+                      </span>
+                    ) : null}
+                  </div>
+                  <span className={`text-[9.5px] font-normal line-clamp-1 ${isPrimary ? "text-purple-200" : "text-slate-500"}`}>
+                    {pack.nameTa}
                   </span>
                 </button>
               );
@@ -384,10 +355,50 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
           </div>
         </div>
 
-        {/* Form Grid: Legal Identifiers & Parties */}
+        {/* STEP 3: Dynamic Domain-Specific Intake Questions */}
+        {activePacksData.some(p => p.intakeQuestions.length > 0) && (
+          <div className="p-4 bg-indigo-50/60 border border-indigo-200 rounded-xl space-y-3">
+            <div className="flex items-center justify-between border-b border-indigo-200/80 pb-2">
+              <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider flex items-center gap-1.5">
+                <FileCheck className="h-4 w-4 text-indigo-700" />
+                <span>03. சட்டக் கள பிரத்யேக வினாக்கள் (Domain-Specific Questions)</span>
+              </h4>
+              <span className="text-[10px] text-indigo-700 font-bold bg-indigo-100 border border-indigo-300 px-2 py-0.5 rounded">
+                Dynamic Intake
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {activePacksData.flatMap(pack => 
+                pack.intakeQuestions.map(q => (
+                  <div key={`${pack.id}_${q.id}`} className="bg-white p-3 rounded-lg border border-indigo-100 shadow-2xs space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-extrabold text-indigo-800 bg-indigo-50 px-1.5 py-0.5 rounded uppercase">
+                        {pack.nameTa}
+                      </span>
+                      {q.required && <span className="text-rose-600 text-[10px] font-bold">*</span>}
+                    </div>
+                    <label className="block text-[10px] font-bold text-slate-800">
+                      {q.labelTa}
+                    </label>
+                    <input
+                      type="text"
+                      value={domainAnswers[q.id] || ""}
+                      onChange={(e) => handleDomainAnswerChange(q.id, e.target.value)}
+                      placeholder={q.placeholderTa}
+                      className="w-full px-3 py-1.5 text-xs font-semibold bg-slate-50 text-slate-900 border border-slate-300 rounded-lg focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 outline-none placeholder:text-slate-400"
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* STEP 4: Universal Parties & Legal Identifiers */}
         <div className="space-y-4">
-          <h3 className="text-xs font-black text-purple-800 uppercase tracking-widest flex items-center gap-1">
-            <span>01.</span> கட்சிகள் & அடையாளங்கள்
+          <h3 className="text-xs font-black text-purple-900 uppercase tracking-widest flex items-center gap-1">
+            <span>04.</span> கட்சிகள் & அடையாளங்கள் (Universal Parties & Identifiers)
           </h3>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -401,7 +412,7 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
                 name="clientName"
                 value={intake.clientName}
                 onChange={handleChange}
-                placeholder="எ.கா: ரமேஷ் குமார்"
+                placeholder="எ.கா: ரமேஷ் குமார் / சன்டெக் எண்டர்பிரைசஸ்"
                 required
                 className="w-full px-3.5 py-2.5 text-xs font-semibold bg-slate-50 text-slate-900 border border-slate-300 rounded-xl focus:border-purple-600 focus:ring-1 focus:ring-purple-600 outline-none transition placeholder:text-slate-400"
               />
@@ -410,7 +421,7 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
             <div>
               <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center gap-1">
                 <Phone className="h-3.5 w-3.5 text-slate-500" />
-                கைபேசி எண்
+                கைபேசி எண் / தொடர்பு
               </label>
               <input
                 type="text"
@@ -425,26 +436,54 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
             <div>
               <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center gap-1">
                 <User className="h-3.5 w-3.5 text-rose-600" />
-                எதிர் தரப்பினர் (Opposite Party) <span className="text-rose-600">*</span>
+                எதிர் தரப்பினர் (Opposite Party / Respondent) <span className="text-rose-600">*</span>
               </label>
               <input
                 type="text"
                 name="oppositeParty"
                 value={intake.oppositeParty}
                 onChange={handleChange}
-                placeholder="எதிர்த்தரப்பு / நிறுவனம் / நபர்"
+                placeholder="எதிர்த்தரப்பு / நிறுவனம் / அதிகாரி"
                 required
                 className="w-full px-3.5 py-2.5 text-xs font-semibold bg-slate-50 text-slate-900 border border-slate-300 rounded-xl focus:border-purple-600 focus:ring-1 focus:ring-purple-600 outline-none transition placeholder:text-slate-400"
               />
             </div>
 
-            {/* Dynamic fields based on Property vs General Legal */}
-            {subWorkspace === "Property360" ? (
+            <div>
+              <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                கட்சிகளின் உறவுமுறை (Party Relationship)
+              </label>
+              <input
+                type="text"
+                name="partyRelationship"
+                value={intake.partyRelationship || ""}
+                onChange={handleChange}
+                placeholder="எ.கா: வாங்குபவர்/விற்பவர், முதலாளி/தொழிலாளி, வங்கி/கடன் பெற்றவர், கணவன்/மனைவி"
+                className="w-full px-3.5 py-2.5 text-xs font-semibold bg-slate-50 text-slate-900 border border-slate-300 rounded-xl focus:border-purple-600 focus:ring-1 focus:ring-purple-600 outline-none transition placeholder:text-slate-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                நீதிமன்றம் / அதிகாரம் / ஆணையம் (Court / Authority Forum)
+              </label>
+              <input
+                type="text"
+                name="courtOrForum"
+                value={intake.courtOrForum || ""}
+                onChange={handleChange}
+                placeholder="எ.கா: சிவில் நீதிமன்றம், நுகர்வோர் ஆணையம், DRT, NCLT, உயர்நீதிமன்றம்"
+                className="w-full px-3.5 py-2.5 text-xs font-semibold bg-slate-50 text-slate-900 border border-slate-300 rounded-xl focus:border-purple-600 focus:ring-1 focus:ring-purple-600 outline-none transition placeholder:text-slate-400"
+              />
+            </div>
+
+            {/* ONLY render Survey No / Village / Taluk if Property Domain is active */}
+            {isPropertyDomainActive && (
               <>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center gap-1">
                     <MapPin className="h-3.5 w-3.5 text-purple-700" />
-                    சர்வே எண் <span className="text-rose-600">*</span>
+                    சர்வே எண் (Survey Number)
                   </label>
                   <input
                     type="text"
@@ -452,7 +491,6 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
                     value={intake.surveyNumber || ""}
                     onChange={handleChange}
                     placeholder="எ.கா: 142/3B"
-                    required={subWorkspace === "Property360"}
                     className="w-full px-3.5 py-2.5 text-xs font-semibold bg-slate-50 text-slate-900 border border-slate-300 rounded-xl focus:border-purple-600 focus:ring-1 focus:ring-purple-600 outline-none transition placeholder:text-slate-400"
                   />
                 </div>
@@ -485,41 +523,11 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
                   />
                 </div>
               </>
-            ) : (
-              <>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    கட்சிகளின் உறவுமுறை (Party Relationship)
-                  </label>
-                  <input
-                    type="text"
-                    name="partyRelationship"
-                    value={intake.partyRelationship || ""}
-                    onChange={handleChange}
-                    placeholder="எ.கா: கடன் கொடுத்தவர்/வாங்கியவர், நிறுவனம்/ஊழியர், கணவன்/மனைவி"
-                    className="w-full px-3.5 py-2.5 text-xs font-semibold bg-slate-50 text-slate-900 border border-slate-300 rounded-xl focus:border-purple-600 focus:ring-1 focus:ring-purple-600 outline-none transition placeholder:text-slate-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    நீதிமன்றம் / அதிகாரம் / ஆணையம் (Court / Authority Forum)
-                  </label>
-                  <input
-                    type="text"
-                    name="courtOrForum"
-                    value={intake.courtOrForum || ""}
-                    onChange={handleChange}
-                    placeholder="எ.கா: குற்றவியல் நடுவர் நீதிமன்றம், நுகர்வோர் ஆணையம், தொழிலாளர் நீதிமன்றம்"
-                    className="w-full px-3.5 py-2.5 text-xs font-semibold bg-slate-50 text-slate-900 border border-slate-300 rounded-xl focus:border-purple-600 focus:ring-1 focus:ring-purple-600 outline-none transition placeholder:text-slate-400"
-                  />
-                </div>
-              </>
             )}
 
             <div>
               <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                மாவட்டம் (தமிழ்நாடு)
+                மாவட்டம் / மாநிலம் (Jurisdiction)
               </label>
               <select
                 name="district"
@@ -537,7 +545,7 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
 
             <div>
               <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                கால வரம்பு அச்சுறுத்தல் உள்ளதா?
+                கால வரம்பு அச்சுறுத்தல் உள்ளதா? (Limitation Risk)
               </label>
               <select
                 name="limitationRisk"
@@ -552,7 +560,7 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
 
             <div>
               <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                வழக்கு நிலுவையில் உள்ளதா?
+                வழக்கு நிலுவையில் உள்ளதா? (Pending Proceedings)
               </label>
               <div className="flex gap-2">
                 <select
@@ -578,27 +586,6 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
           </div>
         </div>
 
-        {/* Narrative Description Text Area */}
-        <div className="space-y-2">
-          <div className="flex justify-between items-end border-b border-slate-200 pb-2">
-            <h3 className="text-xs font-black text-purple-800 uppercase tracking-widest flex items-center gap-1.5">
-              <span>02.</span> மூலப் பிரச்சினை & வழக்கு விபரம் (Case Problem & Narrative)
-            </h3>
-            <span className="text-[10px] font-bold text-slate-500">தேவையானது</span>
-          </div>
-          <p className="text-[11px] text-slate-600 leading-normal font-medium">
-            வாடிக்கையாளரின் தகவல், புகார், பத்திரம் அல்லது சட்டச் சுருக்கத்தை நகலெடுத்து இங்கே ஒட்டவும். எங்கள் UNIKORN360 தளம் 10-நிலை சட்டக் கட்டமைப்பின் படி சிக்கலைக் கண்டறிந்து, உரிமைகளை வகைப்படுத்தி, ஆதாரங்களை மதிப்பீடு செய்து, நடவடிக்கை திட்டத்தை வழங்கும்.
-          </p>
-          <textarea
-            value={rawDescription}
-            onChange={handleNarrativeChange}
-            rows={5}
-            required
-            placeholder="மூலப் பிரச்சினை விபரத்தை இங்கே தட்டச்சு செய்யவும் அல்லது ஒட்டவும்..."
-            className="w-full p-4 text-xs font-sans text-slate-900 bg-slate-50 border border-slate-300 rounded-xl focus:border-purple-600 focus:ring-1 focus:ring-purple-600 outline-none transition leading-relaxed placeholder:text-slate-400"
-          />
-        </div>
-
         {/* Digital Evidence Locker & SHA-256 File Security Upload */}
         <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
           <div className="flex items-center justify-between">
@@ -611,7 +598,7 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
             </span>
           </div>
           <p className="text-[11px] text-slate-600">
-            பத்திரங்கள், காசோலைகள், ஒப்பீட்டு ஒப்பந்தங்கள், ஆவணங்கள், காவல் புகார் அல்லது நீதிமன்ற உத்தரவுகளைப் பதிவேற்றி SHA-256 முத்திரையைப் பெறலாம் (PDF, JPG, PNG, அதிகபட்சம் 15MB).
+            பத்திரங்கள், ஒப்பந்தங்கள், காசோலைகள், மின்னஞ்சல்கள், ஜிஎஸ்டி ஆவணங்கள், காவல் புகார் அல்லது நீதிமன்ற உத்தரவுகளைப் பதிவேற்றி SHA-256 முத்திரையைப் பெறலாம் (PDF, JPG, PNG, அதிகபட்சம் 15MB).
           </p>
           <input
             type="file"
@@ -661,7 +648,7 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
             className={`px-6 py-3 font-extrabold text-xs uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer flex items-center gap-2 shadow-xs ${
               currentCaseCount >= maxCases
                 ? "bg-amber-600 hover:bg-amber-700 text-white"
-                : "bg-purple-700 hover:bg-purple-800 text-white font-black disabled:bg-slate-200 disabled:text-slate-400"
+                : "bg-purple-900 hover:bg-purple-950 text-white font-black disabled:bg-slate-200 disabled:text-slate-400"
             }`}
           >
             {isLoading ? (
@@ -670,7 +657,7 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                <span>UNIKORN360 மூலம் 10-நிலை பகுப்பாய்வு செய்யப்படுகிறது...</span>
+                <span>Legal360 பல்துறை சட்டப் பகுப்பாய்வு செய்யப்படுகிறது...</span>
               </>
             ) : currentCaseCount >= maxCases ? (
               <>
@@ -679,7 +666,7 @@ export function IntakeForm({ onSubmit, isLoading, currentCaseCount = 0, maxCases
               </>
             ) : (
               <>
-                <span>10-நிலை சட்டப் பகுப்பாய்வை உருவாக்கு</span>
+                <span>12-நிலை பல்துறை சட்டப் பகுப்பாய்வை உருவாக்கு</span>
                 <ArrowRight className="h-4.5 w-4.5" />
               </>
             )}

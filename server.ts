@@ -5,6 +5,14 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { 
+  LEGAL_DOMAIN_PACKS, 
+  getDomainPack, 
+  getDomainPacksForIds, 
+  quickTriageDomainPacks, 
+  LegalDomainId,
+  LegalDomainPack 
+} from "./src/data/legalDomainPacks";
 
 dotenv.config();
 
@@ -315,7 +323,289 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
 });
 
-// Case Analysis Endpoint using the UNIKORN360 Property & Multi-Domain Legal Case Solving Framework
+// Universal Legal Triage AI Endpoint (Multi-Domain & Provisional)
+app.post("/api/triage", async (req: express.Request, res: express.Response): Promise<any> => {
+  try {
+    const { rawDescription, intake, languageMode: reqLangMode, langMode, model, selectedModel } = req.body;
+    const validatedModel = validateGeminiModel(model || selectedModel || intake?.selectedModel);
+    const rawLang = reqLangMode || langMode || "dual";
+    const languageMode = (rawLang === "ta" || rawLang === "tamil") ? "ta" : (rawLang === "en" || rawLang === "english") ? "en" : "dual";
+
+    if (!rawDescription || typeof rawDescription !== "string" || rawDescription.trim().length < 5) {
+      return res.status(400).json({ error: "Raw case narrative is required for legal triage." });
+    }
+
+    const safeNarrative = sanitizePromptInput(rawDescription.slice(0, 15000));
+    const quickResult = quickTriageDomainPacks(safeNarrative);
+
+    const ai = getGeminiClient();
+
+    const triagePrompt = `
+You are the Master Legal Triage AI Engine of Unikorn360 Legal360.
+Your mandate is to perform an initial, provisional, multi-domain legal classification on the raw dispute narrative.
+
+DISPUTE NARRATIVE:
+"${safeNarrative}"
+
+AVAILABLE LEGAL DOMAIN PACKS:
+- property_revenue_reg: Property, Land Revenue, Patta, SRO Registration, Encumbrance, UDR Errors, Sec 77A
+- criminal_bns: Criminal Law, BNS (Bharatiya Nyaya Sanhita), BNSS, FIR, Police Investigation, Bail, Cheating, Fraud
+- civil_contract: Civil Law, Breach of Contract, Specific Performance (Sec 10/16(c)), Money Recovery Suits, Damages
+- consumer_cpa: Consumer Protection Act 2019, Product Defect, Deficiency in Service, Builder Delay, Warranty, Compensation
+- corporate_nclt: Corporate Law, Companies Act 2013, NCLT, Shareholder Disputes, Oppression & Mismanagement
+- banking_sarfaesi: Banking & Financial Law, SARFAESI Act Sec 13, DRT/DRAT, NPA Recovery, Hypothecation
+- insolvency_ibc: Insolvency & Bankruptcy Code (IBC 2016), NCLT CIRP, Moratorium Sec 14, Liquidation
+- labour_employment: Labour & Service Law, Industrial Disputes Act, Illegal Termination, Gratuity, PF, Non-payment of Salary
+- family_matrimonial: Family & Matrimonial Law, Divorce, Maintenance Sec 144 BNSS / 125 CrPC, Domestic Violence Act
+- succession_wills: Succession & Inheritance, Indian Succession Act, Hindu Succession Act, Wills, Probate, Partition
+- taxation_gst: Taxation & GST, CGST/SGST Act, SCN Form DRC-01, ITC Denial, Section 73/74 Assessment, Appeals
+- cyber_it_act: Cyber Law & IT Act 2000, Section 66D Online Financial Fraud, Data Theft, Phishing, Identity Theft
+- constitutional_writ: Constitutional Law, Article 226/32 Writ Petitions (Mandamus, Certiorari, Quo Warranto, Habeas Corpus)
+- arbitration_adr: Arbitration & Conciliation Act 1996, Section 9 Interim Relief, Section 11 Appointment, Section 34 Challenge
+- fema_foreign_exchange: FEMA 1999 & Foreign Exchange, NRI Land Acquisition, Inward Remittance, RBI Compliance
+- intellectual_property: Intellectual Property (IPR), Trademarks Act, Patents Act, Copyright Infringement, Injunctions
+- environmental_ngt: Environmental Law, National Green Tribunal (NGT) Act 2010, Pollution Control Board, Water/Air Acts
+- general_triage: Universal Mixed & Multi-Domain Dispute
+
+INSTRUCTIONS:
+1. Multi-domain classification: A dispute can involve a Primary Domain and multiple Secondary/Procedural domains simultaneously. DO NOT force non-property cases into property!
+2. If facts are ambiguous or sparse, mark confidence lower (<80%), maintain provisional status, and generate 2-4 targeted clarification questions.
+3. Identify cross-cutting interactions (e.g. Criminal FIR + Civil Specific Performance, or Builder Delay CPA + TN RERA + Civil Suit, or FEMA + Property + Banking).
+4. Provide structured JSON matching the requested schema.
+`;
+
+    const response = await generateContentWithRetry(ai, {
+      model: validatedModel,
+      contents: triagePrompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          required: [
+            "primaryDomain",
+            "primaryDomainTitle",
+            "secondaryDomains",
+            "secondaryDomainTitles",
+            "proceduralDomains",
+            "crossCuttingIssues",
+            "confidenceScore",
+            "isProvisional",
+            "triageReasoning",
+            "recommendedDomainPacks"
+          ],
+          properties: {
+            primaryDomain: { type: Type.STRING },
+            primaryDomainTitle: { type: Type.STRING },
+            secondaryDomains: { type: Type.ARRAY, items: { type: Type.STRING } },
+            secondaryDomainTitles: { type: Type.ARRAY, items: { type: Type.STRING } },
+            proceduralDomains: { type: Type.ARRAY, items: { type: Type.STRING } },
+            crossCuttingIssues: { type: Type.ARRAY, items: { type: Type.STRING } },
+            confidenceScore: { type: Type.INTEGER },
+            isProvisional: { type: Type.BOOLEAN },
+            triageReasoning: { type: Type.STRING },
+            triageClarifications: { type: Type.ARRAY, items: { type: Type.STRING } },
+            recommendedDomainPacks: { type: Type.ARRAY, items: { type: Type.STRING } }
+          }
+        }
+      }
+    });
+
+    const parsedTriage = cleanAndParseJson(response.text || "{}");
+    const activePacks = Array.from(new Set([
+      parsedTriage.primaryDomain || quickResult.primaryDomain,
+      ...(parsedTriage.secondaryDomains || quickResult.secondaryDomains || []),
+      ...(parsedTriage.recommendedDomainPacks || [])
+    ])).filter(id => Boolean(LEGAL_DOMAIN_PACKS[id as LegalDomainId]));
+
+    const domainPacksData = getDomainPacksForIds(activePacks);
+    
+    // Collect domain-specific intake questions for the active packs
+    const dynamicQuestions = domainPacksData.flatMap(pack => 
+      pack.intakeQuestions.map(q => ({
+        ...q,
+        domainId: pack.id,
+        domainName: pack.nameTa
+      }))
+    );
+
+    res.json({
+      ...parsedTriage,
+      activeDomainPacks: activePacks,
+      dynamicQuestions,
+      languageMode
+    });
+  } catch (error: any) {
+    console.error("Triage Error:", error);
+    // Fallback to local rule-based triage if network/Gemini fails
+    const quick = quickTriageDomainPacks(req.body?.rawDescription || "");
+    const domainPacksData = getDomainPacksForIds(quick.activeDomainPacks);
+    const dynamicQuestions = domainPacksData.flatMap(pack => 
+      pack.intakeQuestions.map(q => ({
+        ...q,
+        domainId: pack.id,
+        domainName: pack.nameTa
+      }))
+    );
+    res.json({
+      primaryDomain: quick.primaryDomain,
+      primaryDomainTitle: LEGAL_DOMAIN_PACKS[quick.primaryDomain]?.nameTa || "பொது சட்டப் பகுப்பாய்வு",
+      secondaryDomains: quick.secondaryDomains,
+      secondaryDomainTitles: quick.secondaryDomains.map(d => LEGAL_DOMAIN_PACKS[d]?.nameTa || d),
+      proceduralDomains: [],
+      crossCuttingIssues: [],
+      confidenceScore: quick.confidenceScore,
+      isProvisional: true,
+      triageReasoning: quick.reasoning,
+      recommendedDomainPacks: quick.activeDomainPacks,
+      activeDomainPacks: quick.activeDomainPacks,
+      dynamicQuestions,
+      languageMode: "dual"
+    });
+  }
+});
+
+// Dynamic Reclassification Endpoint (When new answers, facts or documents are entered)
+app.post("/api/reclassify", async (req: express.Request, res: express.Response): Promise<any> => {
+  try {
+    const { rawDescription, currentCase, newFacts, answers, model, selectedModel } = req.body;
+    const validatedModel = validateGeminiModel(model || selectedModel);
+
+    const combinedNarrative = `
+ORIGINAL NARRATIVE:
+${rawDescription || currentCase?.rawDescription || ""}
+
+NEW FACTS / ANSWERS ENTERED:
+${newFacts || (answers ? JSON.stringify(answers) : "")}
+`;
+
+    const safeNarrative = sanitizePromptInput(combinedNarrative.slice(0, 15000));
+    const ai = getGeminiClient();
+
+    const reclassifyPrompt = `
+You are the Legal Reclassification Engine of Unikorn360 Legal360.
+Re-evaluate the legal classification of this case based on newly submitted facts and answers.
+Determine whether additional legal domains should be added or if the primary classification should shift.
+
+CASE INFORMATION:
+${safeNarrative}
+
+Respond with updated multi-domain classification in JSON.
+`;
+
+    const response = await generateContentWithRetry(ai, {
+      model: validatedModel,
+      contents: reclassifyPrompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          required: ["primaryDomain", "primaryDomainTitle", "secondaryDomains", "crossCuttingIssues", "confidenceScore", "reclassificationNotes", "activeDomainPacks"],
+          properties: {
+            primaryDomain: { type: Type.STRING },
+            primaryDomainTitle: { type: Type.STRING },
+            secondaryDomains: { type: Type.ARRAY, items: { type: Type.STRING } },
+            secondaryDomainTitles: { type: Type.ARRAY, items: { type: Type.STRING } },
+            crossCuttingIssues: { type: Type.ARRAY, items: { type: Type.STRING } },
+            confidenceScore: { type: Type.INTEGER },
+            reclassificationNotes: { type: Type.STRING },
+            activeDomainPacks: { type: Type.ARRAY, items: { type: Type.STRING } }
+          }
+        }
+      }
+    });
+
+    const parsed = cleanAndParseJson(response.text || "{}");
+    const activePacks = Array.from(new Set([
+      parsed.primaryDomain,
+      ...(parsed.secondaryDomains || []),
+      ...(parsed.activeDomainPacks || [])
+    ])).filter(id => Boolean(LEGAL_DOMAIN_PACKS[id as LegalDomainId]));
+
+    const domainPacksData = getDomainPacksForIds(activePacks);
+    const dynamicQuestions = domainPacksData.flatMap(pack => 
+      pack.intakeQuestions.map(q => ({
+        ...q,
+        domainId: pack.id,
+        domainName: pack.nameTa
+      }))
+    );
+
+    res.json({
+      ...parsed,
+      activeDomainPacks: activePacks,
+      dynamicQuestions
+    });
+  } catch (error: any) {
+    console.error("Reclassify Error:", error);
+    res.status(500).json({ error: error.message || "Failed to reclassify case." });
+  }
+});
+
+// Cross-Law Resolver Endpoint (Statutory synthesis and conflict resolution)
+app.post("/api/cross-law-resolve", async (req: express.Request, res: express.Response): Promise<any> => {
+  try {
+    const { caseData, activeDomainPacks, rawDescription, model, selectedModel } = req.body;
+    const validatedModel = validateGeminiModel(model || selectedModel || caseData?.selectedModel);
+
+    const narrative = rawDescription || caseData?.rawDescription || "";
+    const packs = activeDomainPacks || caseData?.activeDomainPacks || ["property_revenue_reg", "civil_contract"];
+    const domainPacksData = getDomainPacksForIds(packs);
+
+    const ai = getGeminiClient();
+
+    const crossLawPrompt = `
+You are the Senior Cross-Law Synthesis Specialist of Unikorn360 Legal360.
+Analyze how the applicable legal domains and statutes interact in this dispute.
+
+APPLICABLE DOMAIN PACKS:
+${domainPacksData.map(p => `- ${p.nameEn} (${p.nameTa}): Key Statutes: ${p.keyStatutes.join(", ")}`).join("\n")}
+
+DISPUTE FACTS:
+"${sanitizePromptInput(narrative.slice(0, 10000))}"
+
+INSTRUCTIONS:
+1. Examine statutory overlaps, concurrent remedies, and potential jurisdictional conflicts (e.g. Insolvency Moratorium vs SARFAESI, CPA 2019 vs Arbitration, Criminal FIR vs Specific Performance, Patta Pass Book Act vs Civil Court Decree).
+2. Determine the harmonious interpretation and operational procedural order of operations.
+3. Return structured JSON matching the schema.
+`;
+
+    const response = await generateContentWithRetry(ai, {
+      model: validatedModel,
+      contents: crossLawPrompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          required: ["interactions", "conflictOrHarmonySummary", "proceduralOrderOfOperations"],
+          properties: {
+            interactions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  statutesInvolved: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  interactionType: { type: Type.STRING, description: "Concurrent Remedy | Priority Override | Conditional Sequence | Harmonious Operation" },
+                  analysis: { type: Type.STRING },
+                  operationalRule: { type: Type.STRING }
+                }
+              }
+            },
+            conflictOrHarmonySummary: { type: Type.STRING },
+            proceduralOrderOfOperations: { type: Type.ARRAY, items: { type: Type.STRING } }
+          }
+        }
+      }
+    });
+
+    const parsed = cleanAndParseJson(response.text || "{}");
+    res.json(parsed);
+  } catch (error: any) {
+    console.error("Cross-Law Resolver Error:", error);
+    res.status(500).json({ error: error.message || "Failed to resolve cross-law interactions." });
+  }
+});
+
+// Master Case Analysis Endpoint: Universal Legal Reasoning Engine + Modular Domain Packs
 app.post("/api/analyze", async (req: express.Request, res: express.Response): Promise<any> => {
   try {
     const { intake, rawDescription, languageMode: reqLangMode, langMode, model, selectedModel } = req.body;
@@ -336,185 +626,126 @@ app.post("/api/analyze", async (req: express.Request, res: express.Response): Pr
       return res.status(400).json({ error: "Case description exceeds maximum length limit of 20,000 characters." });
     }
 
-    const workspace = intake?.workspace || "Citizen360";
-    const subWorkspace = intake?.subWorkspace || "Property360";
-    const module = intake?.module || "Registration";
-    const engine = intake?.engine || "CaseClassificationAI";
+    const safeNarrative = sanitizePromptInput(rawDescription.slice(0, 20000));
 
-    // Sanitize intake fields
+    // Determine Active Domain Packs
+    let activePacksList: LegalDomainId[] = [];
+    if (Array.isArray(intake?.activeDomainPacks) && intake.activeDomainPacks.length > 0) {
+      activePacksList = intake.activeDomainPacks.filter((id: string) => Boolean(LEGAL_DOMAIN_PACKS[id as LegalDomainId]));
+    }
+    if (activePacksList.length === 0 && intake?.primaryDomain && LEGAL_DOMAIN_PACKS[intake.primaryDomain as LegalDomainId]) {
+      activePacksList = [intake.primaryDomain as LegalDomainId];
+    }
+    if (activePacksList.length === 0) {
+      const quick = quickTriageDomainPacks(safeNarrative);
+      activePacksList = quick.activeDomainPacks;
+    }
+
+    const domainPacksData = getDomainPacksForIds(activePacksList);
+    const primaryPack = domainPacksData[0] || LEGAL_DOMAIN_PACKS.general_triage;
+
+    // Sanitize universal intake fields
     const safeIntake = {
-      workspace: String(workspace).slice(0, 50),
-      subWorkspace: String(subWorkspace).slice(0, 50),
-      module: String(module).slice(0, 50),
-      engine: String(engine).slice(0, 50),
-      clientName: String(intake?.clientName || "Unknown").slice(0, 100),
-      mobile: String(intake?.mobile || "Unknown").slice(0, 20),
+      workspace: String(intake?.workspace || "Citizen360").slice(0, 50),
+      subWorkspace: String(intake?.subWorkspace || "Legal360").slice(0, 50),
+      module: String(intake?.module || primaryPack.nameEn).slice(0, 50),
+      engine: String(intake?.engine || "UniversalLegalReasoningEngine").slice(0, 50),
+      clientName: String(intake?.clientName || "Client / Complainant").slice(0, 100),
+      mobile: String(intake?.mobile || "Not Provided").slice(0, 20),
       surveyNumber: String(intake?.surveyNumber || "N/A").slice(0, 100),
       village: String(intake?.village || "N/A").slice(0, 100),
       taluk: String(intake?.taluk || "N/A").slice(0, 100),
-      district: String(intake?.district || "Madurai").slice(0, 100),
-      oppositeParty: String(intake?.oppositeParty || "Opposite Party").slice(0, 100),
+      district: String(intake?.district || "Tamil Nadu / Jurisdiction").slice(0, 100),
+      oppositeParty: String(intake?.oppositeParty || "Opposite Party / Respondent").slice(0, 100),
       partyRelationship: String(intake?.partyRelationship || "Disputing Parties").slice(0, 100),
-      courtOrForum: String(intake?.courtOrForum || "Jurisdictional Authority / Court").slice(0, 100),
+      courtOrForum: String(intake?.courtOrForum || primaryPack.relevantAuthorities[0]?.nameEn || "Jurisdictional Court / Forum").slice(0, 100),
       existingAdvocate: String(intake?.existingAdvocate || "No").slice(0, 50),
       existingCaseNumber: String(intake?.existingCaseNumber || "None").slice(0, 100),
       limitationRisk: String(intake?.limitationRisk || "No").slice(0, 50),
+      primaryDomain: primaryPack.id,
+      activeDomainPacks: activePacksList,
+      domainMetadata: intake?.domainMetadata || {}
     };
 
-    const safeNarrative = sanitizePromptInput(rawDescription.slice(0, 20000));
     const ai = getGeminiClient();
 
-    let prompt = "";
-    if (safeIntake.module === "Consumer360") {
-      prompt = `
-You are the Master Legal AI Engine for the UNIKORN360 – CONSUMER360 CASE SOLVING FRAMEWORK v2.0.
-Your mandate is to answer one central question:
-"Has a consumer suffered because a product or service provider failed in their legal duty, and what is the fastest way to obtain compensation or corrective relief?"
+    // Construct prompt injecting Domain Packs
+    const domainPacksContext = domainPacksData.map((pack, idx) => `
+### [DOMAIN PACK ${idx + 1}]: ${pack.nameEn} (${pack.nameTa}) [${pack.badge}]
+- Key Applicable Statutes: ${pack.keyStatutes.join("; ")}
+- Relevant Authorities & Hierarchy: ${pack.relevantAuthorities.map(a => `${a.nameEn} (${a.hierarchyLevel} - ${a.trackType})`).join(", ")}
+- Procedural Tracks: ${pack.proceduralTracks.join(" | ")}
+- Key Remedies: ${pack.remedyTypes.map(r => `${r.remedyNameEn} (${r.category})`).join(", ")}
+- Specialist Instructions: ${pack.specialistInstructions}
+- Precedent Search Strategy:
+  * Key Statutes: ${pack.precedentSearchStrategy.statutes.join(", ")}
+  * Benches: ${pack.precedentSearchStrategy.courtBenches.join(", ")}
+  * Core Search Terms: ${pack.precedentSearchStrategy.keyTerms.join(", ")}
+- Validation Rules: ${pack.domainValidationRules.join("; ")}
+`).join("\n");
+
+    const prompt = `
+You are the Master AI Engine for the UNIKORN360 UNIVERSAL LEGAL360 CASE SOLVING SYSTEM v2.0.
+Your mandate is to perform a comprehensive, rigorous multi-domain legal analysis for this dispute using the Universal Legal Reasoning Engine with the following active Legal Domain Packs.
+
+### ACTIVE LEGAL DOMAIN PACKS:
+${domainPacksContext}
 
 ### CLIENT INTAKE DETAILS (Stage 0):
-- SubWorkspace: Consumer360 (Citizen360)
-- Module: Consumer360
-- AI Engine / Agent: ${safeIntake.engine || "ProductDefectAI"}
-- Client / Consumer Name: ${safeIntake.clientName}
-- Mobile: ${safeIntake.mobile}
-- Location / District: ${safeIntake.district}
-- Consumer Forum / Authority: ${safeIntake.courtOrForum}
-- Opposite Party (Seller/Manufacturer/Provider): ${safeIntake.oppositeParty}
-- Party Relationship Context: ${safeIntake.partyRelationship}
-- Existing Advocate / Case: ${safeIntake.existingAdvocate} (${safeIntake.existingCaseNumber})
-- Limitation / Urgency Risk?: ${safeIntake.limitationRisk}
-
-### RAW CONSUMER DISPUTE NARRATIVE:
-"${safeNarrative}"
-
----
-
-### UNIKORN360 CONSUMER360 12-STAGE CASE SOLVING FRAMEWORK:
-
-STAGE 1. Case Classification -> Identify Consumer Category (Defective Product, Deficient Service, Medical Negligence, Insurance Claim, Banking, Loan, Housing/Builder Delay, E-commerce, Online Fraud, Education, Travel/Airline/Hotel, Telecom, Electricity, Gas, Vehicle, Warranty, Refund, Unfair Trade Practice, Misleading Advertisement).
-STAGE 2. Core Consumer Issue -> Identify Root Issue (Product defective, Service not provided, Delay, Wrong billing, Hidden charges, Refund denied, Warranty refused, False promise, Poor quality, Negligence, Overcharging, Non-delivery).
-STAGE 3. Consumer Relationship -> Map relationships between Consumer, Seller, Manufacturer, Dealer, Distributor, Service Provider, Bank, Insurance Co, Builder, Hospital, E-commerce Platform.
-STAGE 4. Transaction Timeline -> Chronological sequence: Product purchased / Service booked -> Payment -> Delivery -> Complaint -> Warranty request -> Legal notice -> Consumer complaint -> Hearing -> Order.
-STAGE 5. Rights Violated -> Evaluate Rights (Right to Safety, Information, Choose, Heard, Redressal, Consumer Education) & Statutory Violations (Deficiency of Service, Defect in Goods, Unfair Trade Practice, Restrictive Trade Practice, Product Liability under Consumer Protection Act 2019).
-STAGE 6. Evidence Assessment -> Audit available proof (Invoice, Bill, Warranty Card, Guarantee, Purchase Order, Bank Statement, Payment Receipt, Emails, WhatsApp, SMS, Audio/Video, Photos, Service Reports, Expert Opinion, Complaint History). Report Evidence Strength Rating.
-STAGE 7. Proper Forum Recommendation -> Determine proper forum: Customer Care -> Grievance Officer -> Ombudsman -> Regulatory Authority -> District Consumer Commission -> State Consumer Commission -> NCDRC -> High Court / Supreme Court.
-STAGE 8. Resolution Strategy -> Recommend remedies: Refund, Replacement, Repair, Warranty Claim, Compensation, Legal Notice, Consumer Complaint, Product Liability Claim, Settlement, Appeal, Execution Petition.
-STAGE 9. Risk & Urgency Rating -> Rate Limitation (2 yrs from cause of action), Warranty expiry, Evidence loss, Financial loss, Health risk, Continuing deficiency (🟢 Low, 🟡 Medium, 🟠 High, 🔴 Critical; Score 0-100).
-STAGE 10. Deliverables -> Generate Consumer Case Summary, Issue Report, Compensation Calculation, Timeline, Document Checklist, Legal Notice Draft, Consumer Complaint Draft, Advocate Brief, Hearing Notes, Evidence Index.
-STAGE 11. Consumer Precedent Intelligence -> Search & analyze real Supreme Court, NCDRC, State & District Commission decisions for similar products, services, medical, insurance, builder cases, compensation trends, and legal principles.
-STAGE 12. Client Resolution Report -> Plain language breakdown:
-- What happened? (Summary of dispute)
-- What went wrong? (Broken down by issue e.g. Issue 1 Warranty denied, Issue 2 Repair delayed)
-- Consumer Rights Violated & supporting provisions under CPA 2019.
-- Documents Available vs Missing.
-- Step-by-step Action Plan: Today, Within 7 Days, Within 30 Days.
-- Possible Outcomes: Best Case (Refund + Compensation + Costs), Likely Case (Partial compensation / Repair), Worst Case (Dismissal for lack of proof/limitation).
-- AI Recommendation & Strategy.
-
-### CONSUMER360 SPECIALIZED AI AGENTS INVOLVED:
-- Product Defect Agent (Manufacturing defects, warranties, product liability)
-- Service Deficiency Agent (Delays, poor service, contractual breach)
-- Compensation Agent (Financial loss, mental agony, medical expenses, recognized heads of claim)
-- Evidence Agent (Bills, receipts, emails, WhatsApp, expert reports)
-- Notice & Complaint Agent (Legal Notice & Consumer Commission Complaint drafting)
-- Precedent Agent (NCDRC/SC precedents, compensation awards)
-- Execution Agent (Execution proceedings, order compliance)
-
-FINAL REPORT OUTPUTS REQUIRED:
-A. Internal Legal Analysis (Stages 1 through 12)
-B. Client-Facing Explanation (Plain language Tamil explanation of legal rights, compensation estimation, and next steps)
-C. Documents Required (Mandatory Invoices, Warranty Cards, Emails, Expert Reports)
-D. Immediate Actions (Today, 7 Days, 30 Days)
-E. Service Package (Recommended Package, Fee Range, Expected Compensation/Refund Outcome)
-F. Custom Document Draft (Formal Legal Notice to Seller/Manufacturer OR Consumer Commission Complaint Draft under CPA 2019)
-`;
-    } else if (safeIntake.subWorkspace === "Legal360") {
-      prompt = `
-You are the Master Legal AI Engine for the UNIKORN360 LEGAL CASE SOLUTION FRAMEWORK v2.0.
-Perform a problem-solving centered legal analysis for the specified legal module: "${safeIntake.module}".
-
-### CLIENT INTAKE DETAILS (Stage 0):
-- SubWorkspace: Legal360 (Citizen360)
-- Module: ${safeIntake.module}
-- AI Engine / Agent: ${safeIntake.engine}
 - Client / Complainant Name: ${safeIntake.clientName}
-- Mobile: ${safeIntake.mobile}
+- Contact / Mobile: ${safeIntake.mobile}
 - Location / District: ${safeIntake.district}
-- Forum / Jurisdiction Authority: ${safeIntake.courtOrForum}
-- Opposite Party: ${safeIntake.oppositeParty}
-- Party Relationship Context: ${safeIntake.partyRelationship}
-- Existing Advocate / Proceedings?: ${safeIntake.existingAdvocate} (${safeIntake.existingCaseNumber})
+- Opposite Party / Respondent: ${safeIntake.oppositeParty}
+- Party Relationship: ${safeIntake.partyRelationship}
+- Preferred Forum / Current Authority: ${safeIntake.courtOrForum}
+- Existing Advocate / Case Reference: ${safeIntake.existingAdvocate} (${safeIntake.existingCaseNumber})
 - Limitation / Urgency Risk?: ${safeIntake.limitationRisk}
+- Primary Domain: ${primaryPack.nameEn} (${primaryPack.nameTa})
+- Active Domain Packs: ${activePacksList.join(", ")}
+${safeIntake.surveyNumber && safeIntake.surveyNumber !== "N/A" ? `- Survey Number / Property Details: ${safeIntake.surveyNumber}, ${safeIntake.village}, ${safeIntake.taluk}` : ""}
 
-### RAW CLIENT CASE NARRATIVE:
+### RAW DISPUTE NARRATIVE & FACTS:
 "${safeNarrative}"
 
 ---
 
-### UNIKORN360 LEGAL CASE SOLUTION FRAMEWORK (10 STAGES):
-1. STAGE 1. Case Classification -> Case Category (e.g. Civil, Criminal, Family, Consumer, Labour, Service, Tax, Company, Banking, Cyber, Constitutional, Arbitration, Tribunal Matter) and Specific Sub-type.
-2. STAGE 2. Core Legal Problem -> Root Legal Issue (e.g. Breach of contract, Illegal possession, Fraud, Forgery, Non-payment, Domestic violence, Wrongful dismissal, Cheque bounce, Defamation, Encroachment...)
-3. STAGE 3. Parties & Relationship -> Party Relationship Map (e.g. Plaintiff/Defendant, Complainant/Accused, Buyer/Seller, Employer/Employee, Husband/Wife, Landlord/Tenant, Govt/Citizen, Company/Shareholder)
-4. STAGE 4. Cause of Action -> Cause of Action Timeline (Chronological trigger events created the legal dispute)
-5. STAGE 5. Rights & Liabilities -> Rights Matrix (Rights Violated, Duties Breached, Legal Obligations, Possible Liabilities, Available Protections)
-6. STAGE 6. Evidence Assessment -> Evidence Strength Report (Documentary, Electronic, Witnesses, Official Records; Available vs Missing Evidence; Evidence Strength Rating)
-7. STAGE 7. Legal Route -> Jurisdiction Map (Sequential authority/court flow, e.g. Police Station -> Magistrate Court -> High Court; or Consumer District Commission -> State Commission -> NCDRC)
-8. STAGE 8. Remedy Strategy -> Legal Strategy (Administrative, Civil, Criminal, Alternative/Mediation, Constitutional remedies)
-9. STAGE 9. Risk & Urgency Analysis -> Risk Dashboard (Limitation period, Evidence loss, Arrest risk, Asset/Financial loss risk, Interim relief requirement; Rate: Low, Medium, High, Critical; Score 0-100)
-10. STAGE 10. Deliverables & Execution -> Ready-to-use Legal File (Case Opinion, Case Summary, Chronology, Party Chart, Evidence Index, Document Checklist, Petition/Notice Draft, Action Plan)
-11. STAGE 11. Precedent Intelligence Framework -> Search and analyze real Supreme Court / High Court precedent judgments (e.g. Madras High Court, SC landmark rulings, G.O.s, Circulars) for similar facts, issues, property types, and disputes. Include:
-    - 11.1 Similar Case Finder (Similarity Score 0-100%, number of similar cases)
-    - 11.2 Case Reference Library (Case Name, Citation Number, Court, Judge, Year, State, Bench, Case Type e.g. Ramasamy vs State of TN, W.P.No.12345/2018)
-    - 11.3 Facts Comparison (Side-by-side: Current Case vs Reference Case, features matched, Similarity %)
-    - 11.4 Issues Compared (Ownership, Mutation, Forgery, Possession, Survey, Registration, Inheritance, Limitation)
-    - 11.5 Legal Principles Applied (Acts, Sections e.g., Sec 77A Registration Act, Patta Pass Book Act, G.O.s, Circulars)
-    - 11.6 Court Reasoning (Summary of court's logic, observations, why arguments accepted)
-    - 11.7 Final Outcome (Petition Allowed, Petition Dismissed, Patta Cancelled, Mutation Restored, FIR Quashed, etc.)
-    - 11.8 Why It Matters (AI explanation of direct relevance to this client)
-    - 11.9 Success Probability (AI assessment rating: Strong 90-100%, Good 70-89%, Moderate 50-69%, Weak <50%)
-    - 11.10 Authorities Cited (List SC, HC, Tribunal judgments, G.O.s, Circulars, Statutes)
-12. STAGE 12. Strategy & Outcome Simulator -> Turn analysis into an AI Legal Strategy Simulator:
-    - 12.1 Strongest Legal Route (Writ Petition, Civil Suit, Revenue Appeal, Criminal Complaint, etc.)
-    - 12.2 Most Persuasive Precedents
-    - 12.3 Evidence Gaps to Fill
-    - 12.4 Likely Counterarguments from Opposite Side & Rebuttal Strategies
-    - 12.5 Recommended Additional Proof (Documents, Witnesses, Official Records)
-    - 12.6 Priority Next Actions (Step-by-step ordered strategy list)
+### UNIKORN360 UNIVERSAL 12-STAGE CASE SOLVING & MULTI-DOMAIN FRAMEWORK:
 
-FINAL REPORT OUTPUTS REQUIRED:
-A. Internal Legal Analysis (Stages 1 through 12)
-B. Client-Facing Explanation (Simple explanation of legal position, options available, likely next steps)
-C. Documents Required (Mandatory, Domain/Evidence, Court/Police, Other)
-D. Immediate Actions (24-48 Hours, 7-30 Days, Long-term Strategy)
-E. Service Package (Recommended Package, Deliverables, Professional Fee Range, Expected Outcome)
-F. Custom Document Draft (Fully customized formal Legal Notice, Petition Draft, FIR Complaint, Consumer Complaint, or Writ Petition)
+1. MULTI-DOMAIN TRIAGE & CLASSIFICATION:
+   - Identify Primary Domain and all Secondary / Procedural domains.
+   - Decompose the dispute into individual legal issues (e.g. Issue 1: Specific Performance under Contract Act; Issue 2: Criminal Breach of Trust under BNS; Issue 3: Invalidation of Patta under Revenue laws).
+   - Evaluate Cross-Law Interactions (conflicts, concurrent tracks, priority rules).
+
+2. 12-STAGE DETAILED LEGAL ASSESSMENT:
+   - STAGE 1: Case Category & Specific Sub-type across all applicable domains.
+   - STAGE 2: Core Legal Problem & Root Cause Statement.
+   - STAGE 3: Dispute Subject & Comprehensive Party Relationship Map.
+   - STAGE 4: Cause of Action Timeline (chronological triggers).
+   - STAGE 5: Rights Violated, Duties Breached, Legal Obligations, Liabilities, and Statutory Protections.
+   - STAGE 6: Evidence Assessment (Documentary, Electronic, Witness, Official Records; Available vs Missing Proof; Strength Rating: Weak | Moderate | Strong | Ironclad).
+   - STAGE 7: Sequential Legal Route & Hierarchical Forum Map.
+   - STAGE 8: Remedy Strategy (Primary Remedy, Remedy Category, Alternative Options).
+   - STAGE 9: Risk & Urgency Analysis (Score 0-100, Rating: Low, Medium, High, Critical, Limitation status, Urgency factors).
+   - STAGE 10: Deliverables & Service Package (Deliverables list, Price range, Expected outcome).
+   - STAGE 11: PRECEDENT INTELLIGENCE FRAMEWORK:
+     * Search and synthesize real High Court (especially Madras High Court) and Supreme Court landmark rulings matching the exact facts, statutory sections, and legal issues.
+     * Include Facts Comparison, Issues Compared, Legal Principles Applied, Court Reasoning, Final Outcome, Why It Matters, and Authorities Cited.
+     * List actual G.O.s and Circulars where applicable.
+   - STAGE 12: STRATEGY & OUTCOME SIMULATOR:
+     * Strongest Legal Route with justification.
+     * Most Persuasive Precedents.
+     * Evidence Gaps to Fill (missing elements, how to obtain, urgency).
+     * Likely Opposite Counterarguments & Rebuttal Strategies.
+     * Recommended Additional Proof.
+     * Priority Next Actions (ordered step-by-step).
+
+3. FINAL OUTPUTS:
+   - Client-Facing Explanation (Simple, empowering, plain language).
+   - Documents Required (Mandatory, Domain/Evidence, Court, Other).
+   - Immediate Actions (Within 24 Hours, 7 Days, 30 Days).
+   - Service Package.
+   - Custom Document Draft (Fully drafted formal Legal Notice, Petition, Plaint, Complaint, or Representation).
 `;
-    } else {
-      prompt = `
-You are the AI Orchestration Engine for the UNIKORN360 PROPERTY & LAND REVENUE CASE SOLVING SYSTEM.
-Analyze the following raw property dispute from Tamil Nadu using the UNIKORN360 PROPERTY CASE SOLVING FRAMEWORK v2.0 with STAGE 11 PRECEDENT INTELLIGENCE & STAGE 12 STRATEGY SIMULATOR.
-
-### CLIENT INTAKE DETAILS (Stage 0):
-- Client Name: ${safeIntake.clientName}
-- Mobile: ${safeIntake.mobile}
-- Survey Number: ${safeIntake.surveyNumber}
-- Village: ${safeIntake.village}
-- Taluk: ${safeIntake.taluk}
-- District: ${safeIntake.district}
-- Opposite Party: ${safeIntake.oppositeParty}
-- Existing Advocate?: ${safeIntake.existingAdvocate}
-- Existing Case Number?: ${safeIntake.existingCaseNumber}
-- Limitation Risk?: ${safeIntake.limitationRisk}
-
-### RAW CLIENT CASE NARRATIVE:
-"${safeNarrative}"
-
----
-
-### INSTRUCTIONS:
-Perform a deep and meticulous legal and administrative analysis based on Tamil Nadu property laws (including Patta mutation, SRO registration rules, Section 77A of Registration Act for fraudulent documents, UDR/FMB errors, and Civil Court remedies) including Stage 11 Precedent Intelligence and Stage 12 Strategy & Outcome Simulator.
-`;
-    }
 
     const languageInstruction = languageMode === "ta"
       ? "CRITICAL LANGUAGE MANDATE: Generate ALL user-facing analysis descriptions, legal positions, risk factor lists, client replies, action items, precedent summaries, court reasoning, strategy recommendations, and package descriptions strictly in formal, clear, and professional Tamil (தமிழ்). Keep only the JSON keys in English as specified by the schema."
@@ -523,16 +754,16 @@ Perform a deep and meticulous legal and administrative analysis based on Tamil N
       : "CRITICAL LANGUAGE MANDATE: Generate ALL user-facing analysis descriptions, legal positions, risk factor lists, client replies, action items, precedent summaries, court reasoning, strategy recommendations, and package descriptions in BILINGUAL format (both Tamil and English). For every text block, title, item, or description, provide both Tamil and English, with Tamil first followed by English second (e.g., 'வழக்கு வகைப்பாடு (Case Classification)' or 'வழக்கின் விவரம்\\n(Case Detail in English)'). Keep only the JSON keys in English as specified by the schema.";
 
     const systemInstruction = `
-You are the Senior Legal Counsel and Master Case Solution Engine of Unikorn360, expert across Indian & Tamil Nadu legal practice areas (Civil, Criminal, Family, Consumer, Labour, Tax, Corporate, Cyber, Constitutional, and Land Revenue).
-Analyze cases strictly using the 12-stage framework including Precedent Intelligence and Strategy Simulation.
-Always respond in valid, clean JSON according to the schema provided.
+You are the Senior Legal Counsel and Master Case Solution Engine of Unikorn360 Legal360, expert across all Indian and Tamil Nadu legal domains (Civil, Criminal, Family, Consumer, Labour, Corporate, Banking, Insolvency, Tax, Cyber, Constitutional, Arbitration, FEMA, and Land Revenue).
+Analyze multi-domain cases strictly using the 12-stage framework with Precedent Intelligence and Strategy Simulation.
+Always respond in valid, clean JSON matching the schema provided.
 Ensure the analysis is highly customized, actionable, and legally sound.
 
 GOVERNMENT ORDERS & CIRCULARS ACCURACY MANDATE:
-When identifying Government Orders (G.O.) or Circulars in Stage 11, list ONLY actual, verified records in 'governmentOrders' and 'circulars' arrays. Do not invent fake order numbers or fabricated counts. 'governmentOrdersCount' and 'circularsCount' must strictly equal the exact length of these arrays.
+When identifying Government Orders (G.O.) or Circulars in Stage 11, list ONLY actual, verified records in 'governmentOrders' and 'circulars' arrays. Do not invent fake order numbers. 'governmentOrdersCount' and 'circularsCount' must strictly equal the exact length of these arrays.
 
 ${languageInstruction}
-    `;
+`;
 
     const response = await generateContentWithRetry(ai, {
       model: validatedModel,
@@ -549,6 +780,51 @@ ${languageInstruction}
             "servicePackage", "customDocumentDraft"
           ],
           properties: {
+            multiDomainClassification: {
+              type: Type.OBJECT,
+              properties: {
+                primaryDomain: { type: Type.STRING },
+                primaryDomainTitle: { type: Type.STRING },
+                secondaryDomains: { type: Type.ARRAY, items: { type: Type.STRING } },
+                secondaryDomainTitles: { type: Type.ARRAY, items: { type: Type.STRING } },
+                proceduralDomains: { type: Type.ARRAY, items: { type: Type.STRING } },
+                crossCuttingIssues: { type: Type.ARRAY, items: { type: Type.STRING } },
+                confidenceScore: { type: Type.INTEGER },
+                isProvisional: { type: Type.BOOLEAN },
+                triageReasoning: { type: Type.STRING }
+              }
+            },
+            issueDecomposition: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  issueNumber: { type: Type.INTEGER },
+                  issueTitle: { type: Type.STRING },
+                  applicableDomain: { type: Type.STRING },
+                  applicableStatutes: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  primaryForum: { type: Type.STRING },
+                  keyRemedy: { type: Type.STRING },
+                  priority: { type: Type.STRING, description: "Immediate | Secondary | Conditional" }
+                }
+              }
+            },
+            crossLawInteractions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  statutesInvolved: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  interactionType: { type: Type.STRING },
+                  analysis: { type: Type.STRING },
+                  operationalRule: { type: Type.STRING }
+                }
+              }
+            },
+            activeDomainPacks: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            },
             stage0: {
               type: Type.OBJECT,
               properties: {
@@ -881,6 +1157,25 @@ ${languageInstruction}
     });
 
     const parsedData = cleanAndParseJson(response.text || "{}");
+    
+    // Ensure activeDomainPacks and multiDomainClassification are populated
+    if (!parsedData.activeDomainPacks || !Array.isArray(parsedData.activeDomainPacks) || parsedData.activeDomainPacks.length === 0) {
+      parsedData.activeDomainPacks = activePacksList;
+    }
+    if (!parsedData.multiDomainClassification) {
+      parsedData.multiDomainClassification = {
+        primaryDomain: primaryPack.id,
+        primaryDomainTitle: primaryPack.nameTa,
+        secondaryDomains: activePacksList.filter(p => p !== primaryPack.id),
+        secondaryDomainTitles: activePacksList.filter(p => p !== primaryPack.id).map(p => LEGAL_DOMAIN_PACKS[p as LegalDomainId]?.nameTa || p),
+        proceduralDomains: [],
+        crossCuttingIssues: [],
+        confidenceScore: 90,
+        isProvisional: false,
+        triageReasoning: `வழக்கு பல்துறை சட்டக் கட்டமைப்பின் படி '${primaryPack.nameTa}' களத்தில் முதன்மையாக பகுப்பாய்வு செய்யப்பட்டது.`
+      };
+    }
+
     if (parsedData?.stage11?.similarCases && Array.isArray(parsedData.stage11.similarCases)) {
       parsedData.stage11.similarCasesCount = parsedData.stage11.similarCases.length;
       parsedData.stage11.similarCases = parsedData.stage11.similarCases.map((item: any, idx: number) => ({

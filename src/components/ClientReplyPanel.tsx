@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { PropertyCase } from "../types";
+import { LegalCase } from "../types";
 import { useLanguage } from "../lib/languageContext";
 import { downloadClientActionPDF } from "../lib/pdfExport";
 import { 
@@ -10,7 +10,7 @@ import {
 
 interface ClientReplyPanelProps {
   key?: any;
-  caseData: PropertyCase;
+  caseData: LegalCase;
 }
 
 export function ClientReplyPanel({ caseData }: ClientReplyPanelProps) {
@@ -43,11 +43,36 @@ export function ClientReplyPanel({ caseData }: ClientReplyPanelProps) {
   const timelineText = rReply.estimatedTimeline || caseData.immediateAction?.timeframe || t("அரசு நடைமுறை கால வரம்பிற்கு உட்பட்டது.", "As per statutory procedure timeline.");
 
   const getBriefMessage = () => {
-    return `*${t("நிலம்360 சொத்து சட்ட விளக்கம்", "Nilam360 Property Legal Brief")}*
+    const meta = caseData.domainMetadata || caseData.intake?.domainMetadata || {};
+    const propMeta = meta.PROPERTY || meta.property_revenue_reg;
+    const crimMeta = meta.CRIMINAL || meta.criminal_bns;
+    const taxMeta = meta.TAX || meta.taxation_gst || meta.direct_indirect_tax;
+    const femaMeta = meta.FEMA || meta.fema_cross_border;
+    const consMeta = meta.CONSUMER || meta.consumer_cpa;
+    const cyberMeta = meta.CYBER || meta.cyber_it_act;
+
+    let caseRefLine = "";
+    if (crimMeta?.firNumber) {
+      caseRefLine = `${t("முதல் தகவல் அறிக்கை எண்", "FIR No.")}: ${crimMeta.firNumber} (${crimMeta.policeStation || caseData.stage0?.district || "Jurisdiction"})`;
+    } else if (taxMeta?.assessmentYear || taxMeta?.noticeSection) {
+      caseRefLine = `${t("வரி மதிப்பீட்டு ஆண்டு / பிரிவு", "Tax Notice / AY")}: AY ${taxMeta.assessmentYear || "N/A"} • Sec ${taxMeta.noticeSection || "N/A"}`;
+    } else if (femaMeta?.overseasEntity) {
+      caseRefLine = `FEMA / Overseas Entity: ${femaMeta.overseasEntity}`;
+    } else if (consMeta?.claimAmount) {
+      caseRefLine = `${t("நுகர்வோர் வழக்கு கோரிக்கை", "Consumer Claim")}: ₹${consMeta.claimAmount}`;
+    } else if (cyberMeta?.acknowledgementNumber) {
+      caseRefLine = `Cyber Ack: #${cyberMeta.acknowledgementNumber}`;
+    } else if (propMeta?.surveyNumber || (caseData.stage0?.surveyNumber && caseData.stage0.surveyNumber !== "N/A" && caseData.stage0.surveyNumber !== "None")) {
+      caseRefLine = `${t("உங்களது சர்வே எண்.", "Regarding Survey No.")} ${propMeta?.surveyNumber || caseData.stage0?.surveyNumber} (${propMeta?.village || caseData.stage0?.village || "N/A"} ${t("கிராமம்", "Village")}, ${caseData.stage0?.district || "N/A"} ${t("மாவட்டம்", "District")})`;
+    } else {
+      caseRefLine = `${t("வழக்கு எண் / விபரம்", "Case Ref / Location")}: ${caseData.stage0?.existingCaseNumber || caseData.id || "N/A"} • ${caseData.stage0?.district || "Tamil Nadu"}`;
+    }
+
+    return `*${t("Legal360 சட்ட ஆலோசனை சுருக்கம்", "Legal360 Legal Intelligence Brief")}*
 ----------------------------------------
 ${t("அன்பான", "Dear")} ${caseData.stage0?.clientName || t("வாடிக்கையாளர்", "Client")},
 
-${t("உங்களது சர்வே எண்.", "Regarding Survey No.")} ${caseData.stage0?.surveyNumber || "N/A"} (${caseData.stage0?.village || "N/A"} ${t("கிராமம்", "Village")}, ${caseData.stage0?.district || "N/A"} ${t("மாவட்டம்", "District")}) ${t("சொத்துத் தகராறு தொடர்பான தொழில்முறை மதிப்பீட்டு அறிக்கை கீழே கொடுக்கப்பட்டுள்ளது:", "property dispute report:")}
+${caseRefLine} ${t("தொடர்பான தொழில்முறை சட்ட மதிப்பீட்டு அறிக்கை கீழே கொடுக்கப்பட்டுள்ளது:", "professional legal assessment report:")}
 
 🔴 *${t("கண்டறியப்பட்ட பிரச்சனை", "Problem Identified")}:*
 ${problemText}
@@ -65,7 +90,7 @@ ${authorityText}
 ${timelineText}
 
 ${t("வாழ்த்துக்களுடன்,", "Warm regards,")}
-*${t("நிலம்360 சொத்து ஆலோசனை குழு", "Nilam360 Legal Intelligence Team")}*`;
+*${t("Legal360 சட்ட நுண்ணறிவு குழு", "Legal360 Legal Intelligence Advisory Team")}*`;
   };
 
   const rDocs = caseData.documentsRequired || { mandatory: [], revenue: [], family: [], court: [], other: [], available: [], missing: [], optional: [] };

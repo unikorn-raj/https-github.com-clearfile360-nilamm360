@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { PropertyCase, CaseReferenceItem } from "../types";
+import { LegalCase, CaseReferenceItem } from "../types";
 import { useLanguage } from "../lib/languageContext";
 import { downloadStage11PDF, downloadStage12PDF } from "../lib/pdfExport";
 import { 
@@ -11,7 +11,7 @@ import {
 
 interface PrecedentAndStrategyPanelProps {
   key?: any;
-  caseData: PropertyCase;
+  caseData: LegalCase;
 }
 
 export function PrecedentAndStrategyPanel({ caseData }: PrecedentAndStrategyPanelProps) {

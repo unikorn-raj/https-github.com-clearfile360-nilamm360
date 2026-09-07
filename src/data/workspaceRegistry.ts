@@ -13,6 +13,7 @@ export type Property360ModuleId =
   | "Property Intelligence";
 
 export type Legal360ModuleId = 
+  | "GeneralLegal"
   | "Criminal360"
   | "Family360"
   | "Consumer360"
@@ -26,6 +27,7 @@ export type Legal360ModuleId =
 export type ModuleId = Property360ModuleId | Legal360ModuleId;
 
 export type AIEngineId = 
+  | "LegalTriageAI"
   | "CaseClassificationAI"
   | "DocumentVerificationAI"
   | "PrecedentIntelligenceAI"
@@ -79,6 +81,13 @@ export interface WorkspaceConfig {
 
 export class WorkspaceRegistry {
   public static readonly STANDARD_AI_ENGINES: AIEngineConfig[] = [
+    {
+      id: "LegalTriageAI",
+      nameEn: "Universal Legal Triage & Multi-Domain Classifier AI",
+      nameTa: "பொது சட்ட வகைப்பாடு & பல்துறை AI மையம்",
+      descriptionTa: "அனைத்து வகையான உரிமையியல், குற்றவியல் மற்றும் ஒழுங்குமுறை சட்டப் பிரச்சினைகளை பகுப்பாய்வு செய்யும் முதன்மை AI.",
+      stageNumber: 0
+    },
     {
       id: "CaseClassificationAI",
       nameEn: "Case Classification & Jurisdiction AI",
@@ -246,6 +255,14 @@ export class WorkspaceRegistry {
 
   public static readonly LEGAL360_MODULES: ModuleConfig[] = [
     {
+      id: "GeneralLegal",
+      titleEn: "GeneralLegal",
+      titleTa: "பொது சட்ட ஆலோசனை & வகைப்பாடு (GeneralLegal)",
+      descriptionTa: "அனைத்து வகையான பல்துறை, கலப்பு மற்றும் பொது உரிமையியல்/ஒழுங்குமுறை சட்டப் பகுப்பாய்வு.",
+      keywords: ["general", "legal", "triage", "court", "notice", "dispute", "வழக்கு", "சட்டம்", "நோட்டீஸ்"],
+      iconName: "Scale"
+    },
+    {
       id: "Criminal360",
       titleEn: "Criminal360",
       titleTa: "குற்றவியல் & காவல் துறை (Criminal360)",
@@ -401,7 +418,7 @@ export class WorkspaceRegistry {
       }
     }
 
-    // Default fallback
-    return { workspace: "Citizen360", subWorkspace: "Property360", module: "Registration", engine: "CaseClassificationAI" };
+    // Default fallback: General Legal Triage under Legal360 (Never default to Property)
+    return { workspace: "Citizen360", subWorkspace: "Legal360", module: "GeneralLegal", engine: "LegalTriageAI" };
   }
 }

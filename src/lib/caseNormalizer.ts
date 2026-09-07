@@ -1,4 +1,5 @@
 import { 
+  LegalCase,
   PropertyCase, 
   Stage1Data, 
   Stage2Data, 
@@ -23,13 +24,13 @@ import {
 } from "../types";
 
 /**
- * Normalizes raw/legacy PropertyCase objects from Supabase or localStorage
- * into a fully structurally safe PropertyCase.
+ * Normalizes raw/legacy LegalCase/PropertyCase objects from Supabase or localStorage
+ * into a fully structurally safe LegalCase.
  *
  * IMPORTANT: Preserves all existing valid data and only repairs missing
  * or malformed nested structures to prevent React runtime rendering errors.
  */
-export function normalizePropertyCase(rawCase: any): PropertyCase {
+export function normalizeLegalCase(rawCase: any): LegalCase {
   if (!rawCase || typeof rawCase !== "object") {
     return createDefaultCase("empty_case");
   }
@@ -59,12 +60,24 @@ export function normalizePropertyCase(rawCase: any): PropertyCase {
     ? rawCase.intake 
     : ((rawCase.stage0 && typeof rawCase.stage0 === "object") ? rawCase.stage0 : {});
 
+  // Extract domain metadata and normalize legacy flat property fields into domainMetadata.PROPERTY
+  let domainMetadata = (rawCase.domainMetadata && typeof rawCase.domainMetadata === "object") 
+    ? { ...rawCase.domainMetadata } 
+    : ((rawIntake.domainMetadata && typeof rawIntake.domainMetadata === "object") ? { ...rawIntake.domainMetadata } : {});
+
+  if ((rawIntake.surveyNumber || rawIntake.village || rawIntake.taluk || rawIntake.pattaNumber) && !domainMetadata.PROPERTY && !domainMetadata.property_revenue_reg) {
+    domainMetadata.PROPERTY = {
+      surveyNumber: rawIntake.surveyNumber,
+      village: rawIntake.village,
+      taluk: rawIntake.taluk,
+      pattaNumber: rawIntake.pattaNumber,
+      guidelineValue: rawIntake.guidelineValue
+    };
+  }
+
   const stage0 = {
     clientName: typeof rawIntake.clientName === "string" && rawIntake.clientName ? rawIntake.clientName : "வாடிக்கையாளர் / Client",
     mobile: typeof rawIntake.mobile === "string" ? rawIntake.mobile : "",
-    surveyNumber: typeof rawIntake.surveyNumber === "string" ? rawIntake.surveyNumber : "",
-    village: typeof rawIntake.village === "string" ? rawIntake.village : "",
-    taluk: typeof rawIntake.taluk === "string" ? rawIntake.taluk : "",
     district: typeof rawIntake.district === "string" && rawIntake.district ? rawIntake.district : "தமிழ்நாடு / Tamil Nadu",
     oppositeParty: typeof rawIntake.oppositeParty === "string" ? rawIntake.oppositeParty : "",
     partyRelationship: typeof rawIntake.partyRelationship === "string" ? rawIntake.partyRelationship : "",
@@ -76,13 +89,18 @@ export function normalizePropertyCase(rawCase: any): PropertyCase {
     subWorkspace: rawIntake.subWorkspace || rawCase.subWorkspace,
     module: rawIntake.module || rawCase.module,
     engine: rawIntake.engine || rawCase.engine,
+    // Preserve flat fields for backwards compatibility with legacy UI consumers
+    surveyNumber: typeof rawIntake.surveyNumber === "string" ? rawIntake.surveyNumber : (domainMetadata.PROPERTY?.surveyNumber || ""),
+    village: typeof rawIntake.village === "string" ? rawIntake.village : (domainMetadata.PROPERTY?.village || ""),
+    taluk: typeof rawIntake.taluk === "string" ? rawIntake.taluk : (domainMetadata.PROPERTY?.taluk || ""),
+    domainMetadata
   };
   const intake = { ...stage0 };
 
   // Stage 1 (always object, category & specificType string fallbacks)
   const rawStage1 = (rawCase.stage1 && typeof rawCase.stage1 === "object") ? rawCase.stage1 : {};
   const stage1: Stage1Data = {
-    category: typeof rawStage1.category === "string" ? rawStage1.category : (typeof rawCase.stage1 === "string" ? rawCase.stage1 : "வருவாய் / Revenue"),
+    category: typeof rawStage1.category === "string" ? rawStage1.category : (typeof rawCase.stage1 === "string" ? rawCase.stage1 : "சட்ட விவகாரம் / Legal Matter"),
     specificType: typeof rawStage1.specificType === "string" ? rawStage1.specificType : "",
   };
 
@@ -97,13 +115,13 @@ export function normalizePropertyCase(rawCase: any): PropertyCase {
   let stage3: string | Stage3LegalMap;
   if (typeof rawCase.stage3 === "object" && rawCase.stage3 !== null) {
     stage3 = {
-      subjectType: typeof rawCase.stage3.subjectType === "string" ? rawCase.stage3.subjectType : "நிலம் / Property",
+      subjectType: typeof rawCase.stage3.subjectType === "string" ? rawCase.stage3.subjectType : "வழக்குப் பொருள் / Subject Matter",
       partyRelationshipMap: typeof rawCase.stage3.partyRelationshipMap === "string" ? rawCase.stage3.partyRelationshipMap : "",
     };
   } else if (typeof rawCase.stage3 === "string" && rawCase.stage3.trim()) {
     stage3 = rawCase.stage3;
   } else {
-    stage3 = "நிலம் / Property";
+    stage3 = "வழக்குப் பொருள் / Subject Matter";
   }
 
   // Stage 4 (if object: timelineEvents string[]; if string: legacy string or wrap)
@@ -495,7 +513,7 @@ export function normalizePropertyCase(rawCase: any): PropertyCase {
   if (rawCase.translatedVariants && typeof rawCase.translatedVariants === "object") {
     for (const lang of ["ta", "en", "dual"] as const) {
       if (rawCase.translatedVariants[lang] && typeof rawCase.translatedVariants[lang] === "object") {
-        translatedVariants[lang] = normalizePropertyCase(rawCase.translatedVariants[lang]);
+        translatedVariants[lang] = normalizeLegalCase(rawCase.translatedVariants[lang]);
       }
     }
   }
@@ -512,7 +530,7 @@ export function normalizePropertyCase(rawCase: any): PropertyCase {
     engine: rawCase.engine,
     primaryDomain: rawCase.primaryDomain || rawIntake.primaryDomain,
     activeDomainPacks: Array.isArray(rawCase.activeDomainPacks) ? rawCase.activeDomainPacks : (Array.isArray(rawIntake.activeDomainPacks) ? rawIntake.activeDomainPacks : undefined),
-    domainMetadata: (rawCase.domainMetadata && typeof rawCase.domainMetadata === "object") ? rawCase.domainMetadata : ((rawIntake.domainMetadata && typeof rawIntake.domainMetadata === "object") ? rawIntake.domainMetadata : undefined),
+    domainMetadata,
     multiDomainClassification: (rawCase.multiDomainClassification && typeof rawCase.multiDomainClassification === "object") ? rawCase.multiDomainClassification : undefined,
     issueDecomposition: Array.isArray(rawCase.issueDecomposition) ? rawCase.issueDecomposition : undefined,
     crossLawInteractions: Array.isArray(rawCase.crossLawInteractions) ? rawCase.crossLawInteractions : undefined,
@@ -545,7 +563,12 @@ export function normalizePropertyCase(rawCase: any): PropertyCase {
 }
 
 /**
- * Safely merges two versions of a PropertyCase (e.g. active local/memory state vs freshly fetched cloud state).
+ * Backwards compatibility alias for normalizeLegalCase
+ */
+export const normalizePropertyCase = normalizeLegalCase;
+
+/**
+ * Safely merges two versions of a LegalCase (e.g. active local/memory state vs freshly fetched cloud state).
  * 
  * Rules:
  * 1. Timestamp & Revision Comparison: The version with the newer updatedAt/createdAt is the primary base.
@@ -553,9 +576,9 @@ export function normalizePropertyCase(rawCase: any): PropertyCase {
  *    clientFacingReply, documentsRequired, immediateAction, stage11, stage12) with empty/blank values.
  * 3. History & Version De-duplication: Combine history, updates, and versions cleanly.
  */
-export function mergePropertyCases(caseA: PropertyCase, caseB: PropertyCase): PropertyCase {
-  const normA = normalizePropertyCase(caseA);
-  const normB = normalizePropertyCase(caseB);
+export function mergeLegalCases(caseA: LegalCase, caseB: LegalCase): LegalCase {
+  const normA = normalizeLegalCase(caseA);
+  const normB = normalizeLegalCase(caseB);
 
   const timeA = new Date(normA.updatedAt || normA.createdAt || 0).getTime();
   const timeB = new Date(normB.updatedAt || normB.createdAt || 0).getTime();
@@ -698,7 +721,12 @@ export function mergePropertyCases(caseA: PropertyCase, caseB: PropertyCase): Pr
   };
 }
 
-function createDefaultCase(id: string): PropertyCase {
+/**
+ * Backwards compatibility alias for mergeLegalCases
+ */
+export const mergePropertyCases = mergeLegalCases;
+
+function createDefaultCase(id: string): LegalCase {
   const now = new Date().toISOString();
   return {
     id,
@@ -706,21 +734,21 @@ function createDefaultCase(id: string): PropertyCase {
     rawDescription: "",
     intake: { clientName: "வாடிக்கையாளர்", mobile: "", district: "தமிழ்நாடு", oppositeParty: "", existingAdvocate: "", existingCaseNumber: "", limitationRisk: "Medium" },
     stage0: { clientName: "வாடிக்கையாளர்", mobile: "", district: "தமிழ்நாடு", oppositeParty: "", existingAdvocate: "", existingCaseNumber: "", limitationRisk: "Medium" },
-    stage1: { category: "வருவாய் / Revenue", specificType: "" },
+    stage1: { category: "சட்ட விவகாரம் / Legal Matter", specificType: "" },
     stage2: { realIssue: "", rootCauseStatement: "" },
-    stage3: "நிலம் / Property",
+    stage3: "வழக்குப் பொருள் / Subject Matter",
     stage4: { timelineEvents: [] },
     stage5: { rightsViolated: [], dutiesBreached: [], legalObligations: [], possibleLiabilities: [], availableProtections: [] },
     stage6: { available: [], missing: [], documentary: [], electronic: [], witnesses: [], officialRecords: [], evidenceStrength: "Moderate" },
     stage7: [],
-    stage8: { category: "", primaryRemedy: "பரிகார மனு", alternativeOptions: [] },
+    stage8: { category: "", primaryRemedy: "பரிகார மனு / Legal Relief", alternativeOptions: [] },
     stage9: { factors: [], score: 45, rating: "Medium" },
     stage10: { packageName: "Standard", priceRange: "Standard", description: "", deliverablesList: [] },
     clientFacingReply: { summary: "", actionableAdvice: "", keyFindings: [] },
     documentsRequired: { available: [], missing: [], optional: [] },
     immediateAction: { authorityToApproach: "", nextSteps: [], timeframe: "" },
     servicePackage: { deliverables: [], feeRange: "", recommendedTrack: "" },
-    customDocumentDraft: { title: "சட்ட பத்திரம்", category: "", content: "", sections: [] },
+    customDocumentDraft: { title: "சட்ட பத்திரம் / Legal Petition", category: "", content: "", sections: [] },
     languageMode: "ta",
     translatedVariants: {},
     history: [],

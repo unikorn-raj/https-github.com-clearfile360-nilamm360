@@ -1,9 +1,9 @@
 import React from "react";
 import { ShieldAlert, AlertTriangle, CheckCircle, Scale, FileText, IndianRupee } from "lucide-react";
-import { PropertyCase } from "../types";
+import { LegalCase } from "../types";
 
 interface StatWidgetsProps {
-  cases: PropertyCase[];
+  cases: LegalCase[];
   onSelectCase: (id: string) => void;
 }
 

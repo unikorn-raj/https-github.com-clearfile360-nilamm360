@@ -1,6 +1,6 @@
 import { createClient, SupabaseClient, User as SupabaseUser } from "@supabase/supabase-js";
-import { UserProfile, PlanType, AccountStatus, UserRole, AdminAuditLog } from "../types";
-import { normalizePropertyCase } from "./caseNormalizer";
+import { UserProfile, PlanType, AccountStatus, UserRole, AdminAuditLog, LegalCase } from "../types";
+import { normalizeLegalCase } from "./caseNormalizer";
 
 const supabaseUrl =
   (import.meta.env && import.meta.env.VITE_SUPABASE_URL) ||
@@ -227,8 +227,8 @@ export const subscribeToAuthChanges = (callback: (userProfile: UserProfile | nul
 };
 
 // ----------------- Database Case Sync Operations -----------------
-export const syncCaseToCloud = async (userId: string, caseData: any) => {
-  const normalized = normalizePropertyCase(caseData);
+export const syncCaseToCloud = async (userId: string, caseData: any): Promise<LegalCase> => {
+  const normalized = normalizeLegalCase(caseData);
   const now = new Date().toISOString();
   const createdAt = normalized.createdAt || now;
   const updatedAt = normalized.updatedAt || now;
@@ -264,7 +264,7 @@ export const syncCaseToCloud = async (userId: string, caseData: any) => {
   return fullCaseData;
 };
 
-export const fetchCloudCases = async (userId: string) => {
+export const fetchCloudCases = async (userId: string): Promise<LegalCase[]> => {
   if (!isSupabaseConfigured) {
     return [];
   }
@@ -291,7 +291,7 @@ export const fetchCloudCases = async (userId: string) => {
         createdAt: row.created_at || baseCaseData.createdAt,
         updatedAt: row.updated_at || baseCaseData.updatedAt
       };
-      return normalizePropertyCase(rawObj);
+      return normalizeLegalCase(rawObj);
     });
   } catch (err) {
     console.warn("Fetch cloud cases exception:", err);

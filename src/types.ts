@@ -35,6 +35,86 @@ export interface IssueDecompositionItem {
   primaFacieStrength?: "Strong" | "Moderate" | "Weak";
 }
 
+export interface PropertyDomainMetadata {
+  surveyNumber?: string;
+  village?: string;
+  taluk?: string;
+  pattaNumber?: string;
+  guidelineValue?: string;
+  documentNumber?: string;
+  subRegistrarOffice?: string;
+  [key: string]: any;
+}
+
+export interface CriminalDomainMetadata {
+  firNumber?: string;
+  policeStation?: string;
+  relevantSections?: string;
+  arrestStatus?: string;
+  bailStatus?: string;
+  [key: string]: any;
+}
+
+export interface TaxDomainMetadata {
+  assessmentYear?: string;
+  panOrGstin?: string;
+  noticeSection?: string;
+  dinNumber?: string;
+  demandAmount?: string;
+  [key: string]: any;
+}
+
+export interface CorporateDomainMetadata {
+  cinOrLlpIn?: string;
+  companyName?: string;
+  shareholdingPercentage?: string;
+  tribunalBench?: string;
+  [key: string]: any;
+}
+
+export interface ConsumerDomainMetadata {
+  invoiceOrPolicyNumber?: string;
+  transactionDate?: string;
+  claimAmount?: string;
+  deficiencyType?: string;
+  [key: string]: any;
+}
+
+export interface FEMADomainMetadata {
+  transactionType?: string;
+  residentialStatus?: string;
+  foreignEntityOrBank?: string;
+  edNoticeReference?: string;
+  [key: string]: any;
+}
+
+export interface CyberDomainMetadata {
+  platformOrService?: string;
+  transactionOrIncidentId?: string;
+  financialLossAmount?: string;
+  acknowledgementNumber?: string;
+  [key: string]: any;
+}
+
+export interface DomainMetadataMap {
+  PROPERTY?: PropertyDomainMetadata;
+  property_revenue_reg?: PropertyDomainMetadata;
+  CRIMINAL?: CriminalDomainMetadata;
+  criminal_bns?: CriminalDomainMetadata;
+  TAX?: TaxDomainMetadata;
+  taxation_gst?: TaxDomainMetadata;
+  direct_indirect_tax?: TaxDomainMetadata;
+  CORPORATE?: CorporateDomainMetadata;
+  corporate_nclt?: CorporateDomainMetadata;
+  CONSUMER?: ConsumerDomainMetadata;
+  consumer_cpa?: ConsumerDomainMetadata;
+  FEMA?: FEMADomainMetadata;
+  fema_foreign_exchange?: FEMADomainMetadata;
+  CYBER?: CyberDomainMetadata;
+  cyber_it_act?: CyberDomainMetadata;
+  [domainKey: string]: Record<string, any> | undefined;
+}
+
 export interface IntakeData {
   workspace?: WorkspaceId;
   subWorkspace?: SubWorkspaceId;
@@ -49,16 +129,17 @@ export interface IntakeData {
   partyRelationship?: string;
   courtOrForum?: string;
   existingAdvocate: string;
-  existingCaseNumber: string; // FIR No / Notice Ref / Case No
+  existingCaseNumber: string; // FIR No / Notice Ref / Case No / Citation
   limitationRisk: string;
   selectedModel?: string;
   primaryDomain?: LegalDomainId | string;
   activeDomainPacks?: (LegalDomainId | string)[];
-  domainMetadata?: Record<string, any>;
-  // Legacy & Domain-specific fields for backward compatibility
+  domainMetadata?: DomainMetadataMap;
+  // Legacy flat fields for backward compatibility only (normalized into domainMetadata.PROPERTY)
   surveyNumber?: string;
   village?: string;
   taluk?: string;
+  pattaNumber?: string;
 }
 
 export interface Stage1Data {
@@ -363,7 +444,7 @@ export interface ImpactSummary {
   summaryOfChanges: string;
 }
 
-export interface PropertyCase {
+export interface LegalCase {
   id: string;
   createdAt: string;
   updatedAt?: string;
@@ -397,20 +478,20 @@ export interface PropertyCase {
   crossLawInteractions?: CrossLawInteraction[];
   primaryDomain?: LegalDomainId | string;
   activeDomainPacks?: (LegalDomainId | string)[];
-  domainMetadata?: Record<string, any>;
+  domainMetadata?: DomainMetadataMap;
   languageMode?: LanguageMode;
   selectedModel?: string;
   translatedVariants?: {
-    ta?: PropertyCase;
-    en?: PropertyCase;
-    dual?: PropertyCase;
+    ta?: LegalCase;
+    en?: LegalCase;
+    dual?: LegalCase;
   };
   history?: CaseHistoryEntry[];
   updates?: CaseUpdateEvent[];
   versions?: CaseAnalysisVersion[];
 }
 
-export type LegalCase = PropertyCase;
+export type PropertyCase = LegalCase;
 
 export interface SavedCaseBrief {
   id: string;

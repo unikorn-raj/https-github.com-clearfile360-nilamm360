@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { PropertyCase } from "../types";
+import { LegalCase } from "../types";
 import { 
   FileText, Copy, Check, Sparkles, RefreshCw, 
   ChevronRight, ShieldCheck, QrCode, Download, CheckCircle2, 
@@ -12,7 +12,7 @@ import { useLanguage } from "../lib/languageContext";
 
 interface DocumentDraftPanelProps {
   key?: any;
-  caseData: PropertyCase;
+  caseData: LegalCase;
   onUpdateDraft: (newTitle: string, newContent: string, historyDesc?: string) => void;
 }
 
@@ -228,13 +228,20 @@ export function DocumentDraftPanel({ caseData, onUpdateDraft }: DocumentDraftPan
     setInstructions(prev => prev ? `${prev}. ${promptText}` : promptText);
   };
 
-  // Property metadata helper
-  const hasPropertyMeta = Boolean(
-    caseData.stage0?.surveyNumber || 
-    caseData.stage0?.village || 
-    caseData.stage0?.taluk || 
-    caseData.stage0?.district
-  );
+  // Domain metadata helper
+  const meta = caseData.domainMetadata || caseData.intake?.domainMetadata || {};
+  const propMeta = meta.PROPERTY || meta.property_revenue_reg;
+  const crimMeta = meta.CRIMINAL || meta.criminal_bns;
+  const taxMeta = meta.TAX || meta.taxation_gst || meta.direct_indirect_tax;
+  const femaMeta = meta.FEMA || meta.fema_cross_border;
+  const consMeta = meta.CONSUMER || meta.consumer_cpa;
+  const cyberMeta = meta.CYBER || meta.cyber_it_act;
+  const corpMeta = meta.CORPORATE || meta.corporate_nclt;
+
+  const isPropertyDomain = 
+    caseData.primaryDomain === "property_revenue_reg" || 
+    caseData.activeDomainPacks?.includes("property_revenue_reg") ||
+    Boolean(propMeta?.surveyNumber || (caseData.stage0?.surveyNumber && caseData.stage0.surveyNumber !== "N/A" && caseData.stage0.surveyNumber !== "None"));
 
   // Helper to intelligently parse raw draft text into structured sections and paragraphs
   const renderDocumentParagraphs = (rawText: string) => {
@@ -492,12 +499,16 @@ export function DocumentDraftPanel({ caseData, onUpdateDraft }: DocumentDraftPan
                   />
                 </div>
                 <p className="text-xs text-slate-500 font-medium">
-                  {t("தமிழ்நாடு வருவாய் மற்றும் பத்திரப்பதிவு அதிகார எல்லைக்கு உட்பட்டது", "Jurisdiction of Tamil Nadu Revenue & Registration Department")}
+                  {isPropertyDomain 
+                    ? t("தமிழ்நாடு வருவாய் மற்றும் பத்திரப்பதிவு அதிகார எல்லைக்கு உட்பட்டது", "Jurisdiction of Tamil Nadu Revenue & Registration Department")
+                    : (caseData.stage0?.courtOrForum 
+                        ? `${t("அதிகார எல்லை / மன்றம்", "Jurisdiction / Forum")}: ${caseData.stage0.courtOrForum}`
+                        : t("இந்திய சட்டங்கள் மற்றும் உரிய அதிகார எல்லைக்கு உட்பட்டது", "Subject to applicable Indian statutes & jurisdictional forum"))}
                 </p>
               </div>
 
-              {/* Structured Property Schedule Block (if available) */}
-              {hasPropertyMeta && (
+              {/* Structured Domain Schedule / Case Profile Block */}
+              {isPropertyDomain ? (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2.5">
                   <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
                     <span className="w-1.5 h-3.5 bg-purple-700 rounded"></span>
@@ -509,11 +520,11 @@ export function DocumentDraftPanel({ caseData, onUpdateDraft }: DocumentDraftPan
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-700">
                     <div>
                       <span className="block text-[10px] font-bold text-slate-400 uppercase">{t("சர்வே எண்", "Survey No")}</span>
-                      <span className="font-bold text-slate-900">{caseData.stage0?.surveyNumber || "N/A"}</span>
+                      <span className="font-bold text-slate-900">{propMeta?.surveyNumber || caseData.stage0?.surveyNumber || "N/A"}</span>
                     </div>
                     <div>
                       <span className="block text-[10px] font-bold text-slate-400 uppercase">{t("கிராமம்", "Village")}</span>
-                      <span className="font-medium text-slate-800">{caseData.stage0?.village || "N/A"}</span>
+                      <span className="font-medium text-slate-800">{propMeta?.village || caseData.stage0?.village || "N/A"}</span>
                     </div>
                     <div>
                       <span className="block text-[10px] font-bold text-slate-400 uppercase">{t("வட்டம் / மாவட்டம்", "Taluk / District")}</span>
@@ -524,6 +535,38 @@ export function DocumentDraftPanel({ caseData, onUpdateDraft }: DocumentDraftPan
                     <div>
                       <span className="block text-[10px] font-bold text-slate-400 uppercase">{t("எதிர்த்தரப்பினர்", "Opposite Party")}</span>
                       <span className="font-medium text-slate-800 truncate block">{caseData.stage0?.oppositeParty || "N/A"}</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2.5">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
+                    <span className="w-1.5 h-3.5 bg-purple-700 rounded"></span>
+                    <Scale className="h-3.5 w-3.5 text-purple-700 shrink-0" />
+                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider font-display">
+                      {t("வழக்கு & தரப்பினர் விபரங்கள்", "CASE & PARTIES SCHEDULE")}
+                    </h4>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-700">
+                    <div>
+                      <span className="block text-[10px] font-bold text-slate-400 uppercase">{t("மனுதாரர்", "Petitioner / Client")}</span>
+                      <span className="font-bold text-slate-900">{caseData.stage0?.clientName || "N/A"}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] font-bold text-slate-400 uppercase">{t("எதிர்த்தரப்பினர்", "Opposite Party / Resp.")}</span>
+                      <span className="font-medium text-slate-800 truncate block">{caseData.stage0?.oppositeParty || "N/A"}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] font-bold text-slate-400 uppercase">{t("நீதிமன்றம் / மன்றம்", "Court / Forum")}</span>
+                      <span className="font-medium text-slate-800">
+                        {caseData.stage0?.courtOrForum || caseData.stage0?.district || "Jurisdiction"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] font-bold text-slate-400 uppercase">{t("சட்டப் பிரிவு / களம்", "Domain / Section")}</span>
+                      <span className="font-medium text-slate-800 truncate block">
+                        {crimMeta?.firNumber ? `FIR #${crimMeta.firNumber}` : (taxMeta?.assessmentYear ? `AY ${taxMeta.assessmentYear}` : (caseData.stage1?.category || "Legal Triage"))}
+                      </span>
                     </div>
                   </div>
                 </div>

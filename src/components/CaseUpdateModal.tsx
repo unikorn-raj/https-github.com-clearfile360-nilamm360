@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { PropertyCase, CaseUpdateEvent, CaseAnalysisVersion, ImpactSummary, UpdateEventType } from "../types";
+import { LegalCase, CaseUpdateEvent, CaseAnalysisVersion, ImpactSummary, UpdateEventType } from "../types";
 import { useLanguage } from "../lib/languageContext";
 import { supabase } from "../lib/supabase";
 import { 
@@ -8,10 +8,10 @@ import {
 } from "lucide-react";
 
 interface CaseUpdateModalProps {
-  caseData: PropertyCase;
+  caseData: LegalCase;
   isOpen: boolean;
   onClose: () => void;
-  onApplyUpdate: (updatedCase: PropertyCase, historyDesc: string) => void;
+  onApplyUpdate: (updatedCase: LegalCase, historyDesc: string) => void;
 }
 
 export function CaseUpdateModal({ caseData, isOpen, onClose, onApplyUpdate }: CaseUpdateModalProps) {
@@ -31,7 +31,7 @@ export function CaseUpdateModal({ caseData, isOpen, onClose, onApplyUpdate }: Ca
 
   // Analysis result states
   const [reanalyzedResult, setReanalyzedResult] = useState<{
-    updatedCase: PropertyCase;
+    updatedCase: LegalCase;
     impactSummary: ImpactSummary;
     newEvent: CaseUpdateEvent;
   } | null>(null);
@@ -145,8 +145,8 @@ export function CaseUpdateModal({ caseData, isOpen, onClose, onApplyUpdate }: Ca
     };
     const updatedVersions = [newVersion, ...existingVersions];
 
-    // 3. Assemble complete updated PropertyCase
-    const finalUpdatedCase: PropertyCase = {
+    // 3. Assemble complete updated LegalCase
+    const finalUpdatedCase: LegalCase = {
       ...updatedCase,
       updates: updatedUpdates,
       versions: updatedVersions,

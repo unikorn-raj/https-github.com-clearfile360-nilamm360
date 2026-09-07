@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { IntakeData, PropertyCase, PlanType } from "./types";
+import { IntakeData, LegalCase, PlanType } from "./types";
 import { IntakeForm } from "./components/IntakeForm";
 import { AnalysisDashboard } from "./components/AnalysisDashboard";
 import { ClientReplyPanel } from "./components/ClientReplyPanel";
@@ -25,7 +25,7 @@ import {
   downloadStage12PDF,
   downloadClientActionPDF
 } from "./lib/pdfExport";
-import { normalizePropertyCase, mergePropertyCases } from "./lib/caseNormalizer";
+import { normalizeLegalCase, mergeLegalCases } from "./lib/caseNormalizer";
 import { CaseErrorBoundary } from "./components/CaseErrorBoundary";
 
 import { 
@@ -51,7 +51,7 @@ import {
 export default function App() {
   const { langMode, setLangMode, t } = useLanguage();
   const { isOffline, hasUpdate, updateApp } = usePWA();
-  const [cases, setCases] = useState<PropertyCase[]>([]);
+  const [cases, setCases] = useState<LegalCase[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
 
   const [isCreatingNew, setIsCreatingNew] = useState(false);
@@ -66,6 +66,31 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [isRAGExplorerActive, setIsRAGExplorerActive] = useState(false);
   const [caseToDeleteId, setCaseToDeleteId] = useState<string | null>(null);
+
+  // Helper function to extract concise domain-adaptive reference subtitle
+  const getCaseSubtext = (c: LegalCase | undefined) => {
+    if (!c) return "";
+    const meta = c.domainMetadata || (c.intake as any)?.domainMetadata || {};
+    const prop = meta.PROPERTY || meta.property_revenue_reg;
+    const crim = meta.CRIMINAL || meta.criminal_bns;
+    const tax = meta.TAX || meta.taxation_gst || meta.direct_indirect_tax;
+    const cons = meta.CONSUMER || meta.consumer_cpa;
+    const cyber = meta.CYBER || meta.cyber_it_act;
+    const corp = meta.CORPORATE || meta.corporate_nclt;
+    const fema = meta.FEMA || meta.fema_cross_border;
+
+    if (crim?.firNumber) return `FIR #${crim.firNumber} • ${crim.policeStation || c.stage0?.district || "தமிழ்நாடு"}`;
+    if (tax?.assessmentYear || tax?.noticeSection) return `Tax ${tax.noticeSection || ""} (AY ${tax.assessmentYear || ""}) • ${c.stage0?.district || "தமிழ்நாடு"}`;
+    if (cons?.claimAmount) return `Claim ₹${cons.claimAmount} • ${c.stage0?.district || "தமிழ்நாடு"}`;
+    if (cyber?.acknowledgementNumber) return `Cyber Ack #${cyber.acknowledgementNumber} • ${c.stage0?.district || "தமிழ்நாடு"}`;
+    if (corp?.cinOrLlpIn) return `CIN: ${corp.cinOrLlpIn} • ${c.stage0?.district || "தமிழ்நாடு"}`;
+    if (fema?.overseasEntity) return `FEMA: ${fema.overseasEntity} • ${c.stage0?.district || "தமிழ்நாடு"}`;
+    if (prop?.surveyNumber || (c.stage0?.surveyNumber && c.stage0.surveyNumber !== "N/A" && c.stage0.surveyNumber !== "None" && c.stage0.surveyNumber !== "")) {
+      return `Survey #${prop?.surveyNumber || c.stage0?.surveyNumber}${prop?.village || c.stage0?.village ? ` • ${prop?.village || c.stage0?.village}` : ""}, ${c.stage0?.district || "தமிழ்நாடு"}`;
+    }
+    const domainTitle = c.multiDomainClassification?.primaryDomainTitle || c.primaryDomain;
+    return `${domainTitle || c.stage1?.category || "சட்ட வழக்கு / Legal Case"} • ${c.stage0?.district || "தமிழ்நாடு"}`;
+  };
 
   // New Features Modals State
   const [isAndroidModalOpen, setIsAndroidModalOpen] = useState(false);
@@ -150,13 +175,13 @@ export default function App() {
     const storageKey = currentUid ? `unikorn360_cases_${currentUid}` : "unikorn360_cases_guest";
 
     // 1. Read existing local cases from localStorage
-    let localCases: PropertyCase[] = [];
+    let localCases: LegalCase[] = [];
     try {
       const savedStr = localStorage.getItem(storageKey);
       if (savedStr) {
         const parsed = JSON.parse(savedStr);
         if (Array.isArray(parsed)) {
-          localCases = parsed.map(normalizePropertyCase);
+          localCases = parsed.map(normalizeLegalCase);
         }
       }
     } catch (e) {
@@ -171,10 +196,10 @@ export default function App() {
         if (guestSavedStr) {
           const parsedGuest = JSON.parse(guestSavedStr);
           if (Array.isArray(parsedGuest) && parsedGuest.length > 0) {
-            const guestCases: PropertyCase[] = parsedGuest.map(normalizePropertyCase);
-            const caseMap = new Map<string, PropertyCase>();
-            localCases.forEach((c) => { if (c?.id) caseMap.set(c.id, normalizePropertyCase(c)); });
-            guestCases.forEach((c) => { if (c?.id && !caseMap.has(c.id)) caseMap.set(c.id, normalizePropertyCase(c)); });
+            const guestCases: LegalCase[] = parsedGuest.map(normalizeLegalCase);
+            const caseMap = new Map<string, LegalCase>();
+            localCases.forEach((c) => { if (c?.id) caseMap.set(c.id, normalizeLegalCase(c)); });
+            guestCases.forEach((c) => { if (c?.id && !caseMap.has(c.id)) caseMap.set(c.id, normalizeLegalCase(c)); });
             localCases = Array.from(caseMap.values()).sort(
               (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
             );
@@ -200,18 +225,18 @@ export default function App() {
           if (!Array.isArray(cloudCases)) return;
 
           setCases((prevCases) => {
-            const mergedMap = new Map<string, PropertyCase>();
+            const mergedMap = new Map<string, LegalCase>();
 
             // Seed with in-memory cases
             prevCases.forEach((c) => {
-              if (c?.id) mergedMap.set(c.id, normalizePropertyCase(c));
+              if (c?.id) mergedMap.set(c.id, normalizeLegalCase(c));
             });
 
             // Merge local storage cases
             localCases.forEach((c) => {
               if (c?.id) {
                 const existing = mergedMap.get(c.id);
-                mergedMap.set(c.id, existing ? mergePropertyCases(existing, c) : normalizePropertyCase(c));
+                mergedMap.set(c.id, existing ? mergeLegalCases(existing, c) : normalizeLegalCase(c));
               }
             });
 
@@ -219,11 +244,11 @@ export default function App() {
             cloudCases.forEach((c) => {
               if (c?.id) {
                 const existing = mergedMap.get(c.id);
-                mergedMap.set(c.id, existing ? mergePropertyCases(existing, c) : normalizePropertyCase(c));
+                mergedMap.set(c.id, existing ? mergeLegalCases(existing, c) : normalizeLegalCase(c));
               }
             });
 
-            const merged = Array.from(mergedMap.values()).map(normalizePropertyCase).sort(
+            const merged = Array.from(mergedMap.values()).map(normalizeLegalCase).sort(
               (a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime()
             );
 
@@ -244,7 +269,7 @@ export default function App() {
   }, [user?.uid]);
 
   // Save cases locally and to user storage key
-  const saveCases = (updatedCases: PropertyCase[]) => {
+  const saveCases = (updatedCases: LegalCase[]) => {
     setCases(updatedCases);
     const key = user ? `unikorn360_cases_${user.uid}` : "unikorn360_cases_guest";
     try {
@@ -339,7 +364,7 @@ export default function App() {
       const analyzedData = responseJson;
       const now = new Date().toISOString();
       
-      const newCase: PropertyCase = normalizePropertyCase({
+      const newCase: LegalCase = normalizeLegalCase({
         ...analyzedData,
         id: "case_" + Date.now(),
         createdAt: now,
@@ -377,9 +402,9 @@ export default function App() {
     }
   };
 
-  const handleUpdateCase = async (updatedCase: PropertyCase, historyDesc?: string) => {
+  const handleUpdateCase = async (updatedCase: LegalCase, historyDesc?: string) => {
     const now = new Date().toISOString();
-    let finalCase = normalizePropertyCase({
+    let finalCase = normalizeLegalCase({
       ...updatedCase,
       updatedAt: now,
       revisionNumber: (updatedCase.revisionNumber || 1) + 1
@@ -433,7 +458,7 @@ export default function App() {
     if (!activeCase) return;
 
     const existingDraft = activeCase.customDocumentDraft || {};
-    const updatedCase: PropertyCase = {
+    const updatedCase: LegalCase = {
       ...activeCase,
       customDocumentDraft: {
         ...existingDraft,
@@ -473,7 +498,7 @@ export default function App() {
 
       const caseTitle = selectedCase.intake?.clientName
         ? `${selectedCase.intake.clientName} - ${selectedCase.stage1?.category || "சட்ட வழக்கு"}`
-        : selectedCase.stage1?.category || "சொத்து சட்ட வரைவு & ஆய்வறிக்கை";
+        : selectedCase.stage1?.category || "சட்ட வரைவு & ஆய்வறிக்கை";
 
       let docTitle = caseTitle;
       let docContent = "";
@@ -500,7 +525,7 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
 
       let reportType = mode === "draft" ? "AI LEGAL DRAFT" : "CASE EXECUTIVE SUMMARY";
       let docType = selectedCase.stage1?.category || "Case Executive Brief";
-      let domain = "Property Law (Property360 Intelligence)";
+      let domain = selectedCase.multiDomainClassification?.primaryDomainTitle || selectedCase.primaryDomain || "Legal360 Intelligence";
 
       await downloadDocumentAsPDF({
         title: docTitle,
@@ -520,7 +545,7 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
     }
   };
 
-  const ensureCaseLanguage = React.useCallback(async (canonicalCase: PropertyCase, targetLang: LanguageMode) => {
+  const ensureCaseLanguage = React.useCallback(async (canonicalCase: LegalCase, targetLang: LanguageMode) => {
     if (!canonicalCase) return;
     const storedLangMode = canonicalCase.languageMode || "ta";
     if (storedLangMode === targetLang || canonicalCase.translatedVariants?.[targetLang]) {
@@ -561,9 +586,9 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
         throw new Error("Translation endpoint error");
       }
 
-      const translatedVariant: PropertyCase = await response.json();
+      const translatedVariant: LegalCase = await response.json();
 
-      const updatedCanonical: PropertyCase = {
+      const updatedCanonical: LegalCase = {
         ...canonicalCase,
         translatedVariants: {
           ...(canonicalCase.translatedVariants || {}),
@@ -940,8 +965,8 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
                               <span className="font-extrabold text-slate-900 text-xs truncate max-w-[130px]">{c.stage0?.clientName}</span>
                               <span className="text-[10px] text-purple-800 font-extrabold uppercase tracking-wider bg-purple-50 border border-purple-200 px-1.5 py-0.2 rounded">{c.stage1?.category}</span>
                             </div>
-                            <p className="text-[11px] text-slate-600 truncate font-semibold">Survey #{c.stage0?.surveyNumber} • {c.stage0?.village}, {c.stage0?.district}</p>
-                            <p className="text-[11px] text-slate-700 line-clamp-1 mt-1 font-medium leading-normal">{c.stage2?.rootCauseStatement}</p>
+                            <p className="text-[11px] text-slate-600 truncate font-semibold">{getCaseSubtext(c)}</p>
+                            <p className="text-[11px] text-slate-700 line-clamp-1 mt-1 font-medium leading-normal">{c.stage2?.rootCauseStatement || c.stage2?.realIssue || c.rawDescription}</p>
                           </div>
                           
                           {/* Trash Delete icon */}
@@ -969,16 +994,16 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
                 <div>
                   <div className="flex items-center gap-2 mb-4">
                     <span className="px-3 py-1 bg-purple-100 text-purple-900 font-black text-[10px] rounded-full uppercase tracking-widest border border-purple-200">
-                      நிலம்360 சொத்து & சட்ட மேடை
+                      Legal360 Universal Legal Intelligence Platform
                     </span>
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                    <span className="text-xs text-slate-500 font-semibold">தமிழ்நாடு நில ஒழுங்குமுறை v2.0</span>
+                    <span className="text-xs text-slate-500 font-semibold">தமிழ்நாடு & இந்திய சட்ட ஒழுங்குமுறை v3.0</span>
                   </div>
                   <h2 className="text-2xl font-black text-slate-900 leading-tight tracking-tight font-display">
-                    வாடிக்கையாளரின் நிலப் பிரச்சனைகளைத் துல்லியமான சட்ட மதிப்பீடுகள் மற்றும் நோட்டீஸ்களாக மாற்றுங்கள்.
+                    வாடிக்கையாளரின் சட்ட மற்றும் சொத்துப் பிரச்சனைகளைத் துல்லியமான சட்ட மதிப்பீடுகள் மற்றும் வரைவுகளாக மாற்றுங்கள்.
                   </h2>
                   <p className="text-slate-600 text-xs sm:text-sm leading-relaxed mt-4 font-normal">
-                    நிலம்360 தளம் நில உரிமையாளர்கள், வழக்கறிஞர்கள், கிராம நிர்வாக அலுவலர்கள் (VAO) மற்றும் பட்டா மனுதாரர்களுக்குத் தமிழ்நாடு நில வருவாய் ஒழுங்குமுறைகளின் கீழ் வழிகாட்டும் அதிகாரப்பூர்வ சேவை மையம் ஆகும். இது நிலப் பிரச்சனைகளின் மூலக்காரணத்தைக் கண்டறிந்து, கால வரம்பு மதிப்பீடுகளை வழங்கி, அதிகாரிகளுக்கான மனுக்கள் மற்றும் தடையுத்தரவு நோட்டீஸ்களைத் தயாரிக்கிறது.
+                    Legal360 தளம் வழக்கறிஞர்கள், சட்ட ஆலோசகர்கள், நிறுவனங்கள் மற்றும் பொதுமக்களுக்குத் தமிழ் & ஆங்கிலத்தில் அனைத்து சட்டப் பிரிவுகளிலும் (நில வருவாய், குற்றவியல், குடும்ப சட்டம், வரி விதிப்பு, கார்ப்பரேட், நுகர்வோர், சைபர் & FEMA) முழுமையான வழிகாட்டும் ஒருங்கிணைந்த சட்ட நுண்ணறிவு மேடையாகும்.
                   </p>
                 </div>
 
@@ -988,9 +1013,9 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
                       <Sparkles className="h-5 w-5" />
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-0.5">📋 சொத்து மதிப்பீடு (10-நிலை)</h4>
+                      <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-0.5">📋 சட்ட மதிப்பீடு & பகுப்பாய்வு</h4>
                       <p className="text-xs text-slate-600 leading-relaxed font-normal">
-                        நில அடையாளங்கள், ஆவண இடைவெளிகள், உள்ளூர் வருவாய் அதிகாரி வழித்தடங்கள் மற்றும் தணிக்கை சரிபார்ப்புப் பட்டியல்.
+                        வழக்கு மூலக்காரணம், ஆவண இடைவெளிகள், சட்டப்பிரிவு உரிமைகள் மற்றும் அதிகார வரம்பு சரிபார்ப்புப் பட்டியல்.
                       </p>
                     </div>
                   </div>
@@ -1002,7 +1027,7 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
                     <div>
                       <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-0.5">📜 சட்ட நோட்டீஸ் & மனுக்கள்</h4>
                       <p className="text-xs text-slate-600 leading-relaxed font-normal">
-                        பிரிவு 77A ஆட்சேபனை மனுக்கள், வருவாய் அலுவலர் மேல்முறையீடுகள் மற்றும் அதிகாரப்பூர்வ பிரதிநிதித்துவ அறிவிப்பு வரைவுகள்.
+                        சட்டப்பிரிவு நோட்டீஸ்கள், நீதிமன்ற மனுக்கள், மேல்முறையீடுகள் மற்றும் அதிகாரப்பூர்வ பிரதிநிதித்துவ வரைவுகள்.
                       </p>
                     </div>
                   </div>
@@ -1016,7 +1041,7 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
                     }}
                     className="px-6 py-3.5 bg-purple-700 hover:bg-purple-800 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
                   >
-                    <span>புதிய சொத்து மதிப்பீட்டைத் தொடங்கு</span>
+                    <span>புதிய சட்ட வழக்குப் பகுப்பாய்வைத் தொடங்கு</span>
                     <ArrowRight className="h-4.5 w-4.5" />
                   </button>
                 </div>
@@ -1093,14 +1118,14 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
                   <div>
                     <div className="flex items-center gap-1.5">
                       <h2 className="text-sm font-black text-slate-900 font-display leading-tight">
-                        {selectedCase?.stage0?.clientName}-இன் சொத்து கோப்பு
+                        {selectedCase?.stage0?.clientName}-இன் சட்டக் கோப்பு
                       </h2>
                       <span className="px-2 py-0.5 bg-purple-100 border border-purple-200 text-purple-900 font-extrabold text-[8px] rounded uppercase tracking-wider">
                         செயலில் உள்ளது
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500 font-semibold mt-0.5">
-                      சர்வே எண்: {selectedCase?.stage0?.surveyNumber} • {selectedCase?.stage0?.village}, {selectedCase?.stage0?.district}
+                      {getCaseSubtext(selectedCase)}
                     </p>
                   </div>
                 </div>
@@ -1108,7 +1133,7 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
                 {/* Centered Tab Segment Selectors - Refined Professional Office Terminology */}
                 <div className="bg-slate-100 p-1 rounded-xl border border-slate-300 flex flex-wrap gap-1 shadow-xs self-start md:self-auto">
                   {[
-                    { key: "analysis", label: "📋 சொத்து மதிப்பீடு" },
+                    { key: "analysis", label: "📋 சட்ட பகுப்பாய்வு" },
                     { key: "brief", label: "👤 வாடிக்கையாளர் நடவடிக்கை" },
                     { key: "draft", label: "📜 சட்ட நோட்டீஸ் வரைவு" },
                     { key: "precedents", label: "⚖️ முன்மாதிரி & சட்ட உத்தி" }
@@ -1679,7 +1704,7 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
                 <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-1">
                   <p className="text-xs font-black text-white">{targetCase.stage0?.clientName || "பெயரிடப்படாத வழக்கு"}</p>
                   <p className="text-[11px] text-slate-400 font-medium">
-                    சர்வே எண்: {targetCase.stage0?.surveyNumber} • {targetCase.stage0?.village}, {targetCase.stage0?.district}
+                    {getCaseSubtext(targetCase)}
                   </p>
                   <p className="text-[10px] text-rose-400 font-bold mt-1">
                     * இந்நடவடிக்கை நிரந்தரமானது. மீட்டெடுக்க முடியாது.

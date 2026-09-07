@@ -1,7 +1,7 @@
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import { 
-  PropertyCase, 
+  LegalCase, 
   CaseReferenceItem, 
   GovernmentOrderItem, 
   CircularItem,
@@ -31,6 +31,64 @@ export interface PDFExportOptions {
   modelUsed?: string;
   clientName?: string;
   category?: string;
+}
+
+// Helper to dynamically extract legal domain titles and references
+function extractCaseDomainDetails(caseData: LegalCase) {
+  const intake = caseData.intake || ({} as any);
+  const meta = caseData.domainMetadata || intake.domainMetadata || {};
+  const primaryDomain = caseData.primaryDomain || intake.primaryDomain || caseData.multiDomainClassification?.primaryDomain || "";
+  const domainTitle = caseData.multiDomainClassification?.primaryDomainTitle || primaryDomain;
+  
+  const prop = meta.PROPERTY || meta.property_revenue_reg;
+  const crim = meta.CRIMINAL || meta.criminal_bns;
+  const tax = meta.TAX || meta.taxation_gst || meta.direct_indirect_tax;
+  const corp = meta.CORPORATE || meta.corporate_nclt;
+  const cons = meta.CONSUMER || meta.consumer_cpa;
+  const fema = meta.FEMA || meta.fema_foreign_exchange;
+  const cyber = meta.CYBER || meta.cyber_it_act;
+
+  let refLabel = "CASE / CITATION REF";
+  let refValue = intake.existingCaseNumber && intake.existingCaseNumber !== "None" && intake.existingCaseNumber !== "N/A" 
+    ? intake.existingCaseNumber 
+    : (domainTitle ? `${domainTitle} Legal Assessment` : "Universal Legal Assessment");
+  let divisionTitle = "Universal Multi-Domain Legal AI Division • 12-Stage Strategic Blueprint";
+
+  if (crim?.firNumber) {
+    refLabel = "FIR / CRIME NUMBER";
+    refValue = `${crim.firNumber}${crim.policeStation ? ` (${crim.policeStation})` : ""}`;
+    divisionTitle = "Criminal Law & Constitutional Remedies AI Division • 12-Stage Strategic Blueprint";
+  } else if (tax?.assessmentYear || tax?.panOrGstin || tax?.noticeSection) {
+    refLabel = "TAX / NOTICE SECTION";
+    refValue = `${tax.noticeSection || "Tax Notice"} ${tax.assessmentYear ? `(AY ${tax.assessmentYear})` : ""} ${tax.panOrGstin ? `[${tax.panOrGstin}]` : ""}`.trim();
+    divisionTitle = "Taxation, GST & Appellate Tribunal AI Division • 12-Stage Strategic Blueprint";
+  } else if (corp?.cinOrLlpIn || corp?.companyName) {
+    refLabel = "CORPORATE / CIN REF";
+    refValue = `${corp.companyName || "Corporate Entity"} ${corp.cinOrLlpIn ? `(${corp.cinOrLlpIn})` : ""}`.trim();
+    divisionTitle = "Corporate, NCLT & Commercial Law AI Division • 12-Stage Strategic Blueprint";
+  } else if (cons?.invoiceOrPolicyNumber || cons?.claimAmount) {
+    refLabel = "CONSUMER / CLAIM REF";
+    refValue = `${cons.invoiceOrPolicyNumber || "Claim"} ${cons.claimAmount ? `(₹${cons.claimAmount})` : ""}`.trim();
+    divisionTitle = "Consumer Protection & Redressal AI Division • 12-Stage Strategic Blueprint";
+  } else if (fema?.transactionType || fema?.edNoticeReference) {
+    refLabel = "FEMA / ADVISORY REF";
+    refValue = `${fema.edNoticeReference || fema.transactionType || "Foreign Exchange Notice"}`;
+    divisionTitle = "FEMA & International Regulatory AI Division • 12-Stage Strategic Blueprint";
+  } else if (cyber?.acknowledgementNumber || cyber?.transactionOrIncidentId) {
+    refLabel = "CYBER ACK / INCIDENT REF";
+    refValue = `${cyber.acknowledgementNumber || cyber.transactionOrIncidentId || "Cyber Incident"}`;
+    divisionTitle = "Cyber Law & Digital Evidence AI Division • 12-Stage Strategic Blueprint";
+  } else if (prop?.surveyNumber || (intake.surveyNumber && intake.surveyNumber !== "N/A" && intake.surveyNumber !== "None" && intake.surveyNumber !== "")) {
+    refLabel = "SURVEY / PROPERTY REF";
+    const sNo = prop?.surveyNumber || intake.surveyNumber;
+    const v = prop?.village || intake.village;
+    refValue = `${sNo}${v ? ` (${v})` : ""}`;
+    divisionTitle = "Land Revenue & Property Law AI Division • 12-Stage Strategic Blueprint";
+  } else if (domainTitle) {
+    divisionTitle = `${domainTitle} Legal AI Division • 12-Stage Strategic Blueprint`;
+  }
+
+  return { refLabel, refValue, divisionTitle };
 }
 
 // Common style tags for PDF rendering with high legibility, strict typography hierarchy, and balanced spacing
@@ -228,29 +286,30 @@ export const PDF_SHARED_STYLES = `
 /**
  * Renders the Executive Letterhead Cover & Parameter Table matching the reference document
  */
-export function renderCaseBanner(caseData: PropertyCase): string {
+export function renderCaseBanner(caseData: LegalCase): string {
   const intake = caseData.intake || ({} as any);
   const clientName = intake.clientName || caseData.stage0?.clientName || "Direct Client";
-  const oppositeParty = intake.oppositeParty || (intake as any).opponentName || "Opponent / Department";
-  const category = caseData.stage1?.category || intake.disputeCategory || "Property Dispute";
-  const subCategory = (caseData.stage1 as any)?.subCategory || caseData.stage1?.specificType || "Revenue & Title Conflict";
-  const location = [intake.village || caseData.stage0?.village, intake.taluk || caseData.stage0?.taluk, intake.district || caseData.stage0?.district].filter(Boolean).join(", ") || "Tamil Nadu";
-  const surveyNo = intake.surveyNumber || (typeof caseData.stage3 === 'object' && caseData.stage3 !== null ? (caseData.stage3 as any).surveyNumber : '') || caseData.stage0?.surveyNumber || "N/A";
+  const oppositeParty = intake.oppositeParty || (intake as any).opponentName || "Opponent / Respondent";
+  const category = caseData.stage1?.category || intake.disputeCategory || "Civil / Regulatory Dispute";
+  const subCategory = (caseData.stage1 as any)?.subCategory || caseData.stage1?.specificType || "Statutory & Substantive Review";
+  const location = [intake.village || caseData.stage0?.village, intake.taluk || caseData.stage0?.taluk, intake.district || caseData.stage0?.district].filter(Boolean).join(", ") || "Jurisdiction / State";
   const caseId = caseData.id || "UK360-CASE";
   const dateStr = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+
+  const { refLabel, refValue, divisionTitle } = extractCaseDomainDetails(caseData);
 
   return `
     <div style="margin-bottom: 12px; font-family: 'Mukta Malar', 'Noto Sans Tamil', system-ui, -apple-system, sans-serif;">
       <!-- Title Header Block -->
       <div style="text-align: center; margin-bottom: 12px;">
         <div style="font-size: 10pt; font-weight: 800; color: #0f2b5c; letter-spacing: 0.05em; text-transform: uppercase;">
-          Unikorn360 Business Intelligence
+          Unikorn360 Business &amp; Legal Intelligence
         </div>
         <div style="font-size: 10pt; font-weight: 800; color: #0f2b5c; letter-spacing: 0.04em; text-transform: uppercase; margin-top: 2px;">
           LEGAL INTELLIGENCE ADVISORY REPORT
         </div>
         <div style="font-size: 10pt; color: #475569; margin-top: 2px; font-weight: 500;">
-          Land Revenue &amp; Registration Legal AI Division • 12-Stage Strategic Blueprint
+          ${escapePdfHtml(divisionTitle)}
         </div>
       </div>
 
@@ -269,8 +328,8 @@ export function renderCaseBanner(caseData: PropertyCase): string {
           <td><b>${escapePdfHtml(category)}</b> (${escapePdfHtml(subCategory)})</td>
         </tr>
         <tr>
-          <th>SURVEY / PROPERTY REF</th>
-          <td><b style="color: #0f2b5c;">${escapePdfHtml(surveyNo)}</b></td>
+          <th>${escapePdfHtml(refLabel)}</th>
+          <td><b style="color: #0f2b5c;">${escapePdfHtml(refValue)}</b></td>
         </tr>
         <tr>
           <th>JURISDICTION &amp; LOCATION</th>
@@ -340,7 +399,7 @@ function checkIsDocumentAvailable(docName: string, availableList: string[], miss
 // -------------------------------------------------------------------------------------------------
 // REUSABLE STAGES 00-10 BLOCK GENERATOR (Full Actual Content of Stages 00 to 10)
 // -------------------------------------------------------------------------------------------------
-export function renderStage00To10Blocks(caseData: PropertyCase): PDFSectionBlock[] {
+export function renderStage00To10Blocks(caseData: LegalCase): PDFSectionBlock[] {
   const blocks: PDFSectionBlock[] = [];
   const intake = caseData.intake || ({} as any);
   const stage0 = caseData.stage0 || ({} as any);
@@ -354,6 +413,8 @@ export function renderStage00To10Blocks(caseData: PropertyCase): PDFSectionBlock
   const stage8 = caseData.stage8 || ({} as any);
   const stage9 = caseData.stage9 || ({} as any);
   const stage10 = caseData.stage10 || ({} as any);
+
+  const { refLabel, refValue } = extractCaseDomainDetails(caseData);
 
   // STAGE 00 & STAGE 01: Client Intake & Dispute Classification (Full-Width Structured Tables)
   blocks.push({
@@ -371,18 +432,18 @@ export function renderStage00To10Blocks(caseData: PropertyCase): PDFSectionBlock
           <th style="width: 25%;">Client / Petitioner</th>
           <td style="width: 25%;"><b>${escapePdfHtml(intake.clientName || stage0.clientName || "Direct Client")}</b></td>
           <th style="width: 25%;">Opposing Party</th>
-          <td style="width: 25%;"><b style="color: #991b1b;">${escapePdfHtml(intake.oppositeParty || (intake as any).opponentName || "Opponent / Department")}</b></td>
+          <td style="width: 25%;"><b style="color: #991b1b;">${escapePdfHtml(intake.oppositeParty || (intake as any).opponentName || "Opponent / Respondent")}</b></td>
         </tr>
         <tr>
           <th>Mobile / Contact</th>
           <td>${escapePdfHtml(intake.mobile || stage0.mobile || "Confidential")}</td>
           <th>Party Relationship</th>
-          <td>${escapePdfHtml(intake.partyRelationship || stage0.partyRelationship || "Adverse Claim / Title Discrepancy")}</td>
+          <td>${escapePdfHtml(intake.partyRelationship || stage0.partyRelationship || "Adverse Claim / Disputed Relationship")}</td>
         </tr>
         <tr>
           <th>Existing Advocate</th>
           <td>${escapePdfHtml(intake.existingAdvocate || stage0.existingAdvocate || "None / Direct Advisory")}</td>
-          <th>Case / FIR Number</th>
+          <th>Case / FIR / Citation</th>
           <td>${escapePdfHtml(intake.existingCaseNumber || stage0.existingCaseNumber || "Pre-litigation / Fresh Representation")}</td>
         </tr>
       </table>
@@ -393,19 +454,19 @@ export function renderStage00To10Blocks(caseData: PropertyCase): PDFSectionBlock
       <table class="pdf-table">
         <tr>
           <th style="width: 25%;">Primary Category</th>
-          <td style="width: 25%;"><b>${escapePdfHtml(stage1.category || intake.disputeCategory || "Property Dispute")}</b></td>
+          <td style="width: 25%;"><b>${escapePdfHtml(stage1.category || intake.disputeCategory || "Civil / Regulatory Dispute")}</b></td>
           <th style="width: 25%;">Specific Dispute Type</th>
-          <td style="width: 25%;"><b style="color: #0f2b5c;">${escapePdfHtml(stage1.specificType || (stage1 as any).subCategory || "Revenue & Title Conflict")}</b></td>
+          <td style="width: 25%;"><b style="color: #0f2b5c;">${escapePdfHtml(stage1.specificType || (stage1 as any).subCategory || "Statutory & Substantive Review")}</b></td>
         </tr>
         <tr>
           <th>District / Jurisdiction</th>
-          <td><b>${escapePdfHtml(intake.district || stage0.district || "Tamil Nadu")}</b></td>
-          <th>Taluk / Village</th>
-          <td>${escapePdfHtml([intake.village || stage0.village, intake.taluk || stage0.taluk].filter(Boolean).join(", ") || "Tamil Nadu")}</td>
+          <td><b>${escapePdfHtml(intake.district || stage0.district || "State / High Court Jurisdiction")}</b></td>
+          <th>Location / Forum</th>
+          <td>${escapePdfHtml([intake.village || stage0.village, intake.taluk || stage0.taluk, intake.courtOrForum].filter(Boolean).join(", ") || "Jurisdictional Authority")}</td>
         </tr>
         <tr>
-          <th>Survey / Property Ref</th>
-          <td><b style="color: #0f2b5c;">${escapePdfHtml(intake.surveyNumber || (typeof stage3 === 'object' && stage3 !== null ? stage3.surveyNumber : '') || stage0.surveyNumber || "N/A")}</b></td>
+          <th>${escapePdfHtml(refLabel)}</th>
+          <td><b style="color: #0f2b5c;">${escapePdfHtml(refValue)}</b></td>
           <th>Statutory Limitation</th>
           <td><span class="pdf-badge ${intake.limitationRisk === 'High' ? 'pdf-badge-rose' : 'pdf-badge-emerald'}">${escapePdfHtml(intake.limitationRisk || "Within Statutory Limitation")}</span></td>
         </tr>
@@ -414,8 +475,8 @@ export function renderStage00To10Blocks(caseData: PropertyCase): PDFSectionBlock
   });
 
   // STAGE 02: Core Legal Issue & Root Cause (Full Natural Paragraphs across 100% width)
-  const realIssue = stage2.realIssue || "Dispute regarding property boundary, revenue title entry, and unverified mutation.";
-  const rootCause = stage2.rootCauseStatement || "Discrepancy in revenue records and lack of due enquiry prior to mutation.";
+  const realIssue = stage2.realIssue || "Core legal controversy identified across applicable statutory framework.";
+  const rootCause = stage2.rootCauseStatement || "Discrepancy in compliance, documentation, or statutory interpretation.";
   
   blocks.push({
     minRemainingHeight: 80,
@@ -434,14 +495,14 @@ export function renderStage00To10Blocks(caseData: PropertyCase): PDFSectionBlock
   });
 
   // STAGE 03: Subject Matter & Relationship Map (Full Natural Paragraphs across 100% width)
-  const subjectType = typeof stage3 === 'object' && stage3 !== null ? stage3.subjectType : (typeof stage3 === 'string' ? stage3 : "Agricultural / Natham / Residential Land");
+  const subjectType = typeof stage3 === 'object' && stage3 !== null ? stage3.subjectType : (typeof stage3 === 'string' ? stage3 : "Dispute Subject Matter & Legal Standing");
   const relMap = typeof stage3 === 'object' && stage3 !== null ? stage3.partyRelationshipMap : "Direct adverse claim between petitioner and respondent.";
 
   blocks.push({
     minRemainingHeight: 80,
     html: `
-      <div class="pdf-stage-title">3. சொத்து விவரம் &amp; தரப்பினர் வரைபடம் • SUBJECT MATTER &amp; RELATIONSHIP MAP</div>
-      <div class="pdf-subheading">PROPERTY SUBJECT MATTER / சொத்து வகை</div>
+      <div class="pdf-stage-title">3. வழக்குப் பொருள் &amp; தரப்பினர் வரைபடம் • SUBJECT MATTER &amp; RELATIONSHIP MAP</div>
+      <div class="pdf-subheading">SUBSTANTIVE SUBJECT MATTER / வழக்குப் பொருள்</div>
       <p class="pdf-article-lead" style="margin-bottom: 8px;">
         ${escapePdfHtml(subjectType)}
       </p>
@@ -657,7 +718,7 @@ export function renderStage00To10Blocks(caseData: PropertyCase): PDFSectionBlock
 // -------------------------------------------------------------------------------------------------
 // REUSABLE STAGE 11 BLOCK GENERATOR (Precedent Intelligence / முன்மாதிரி தீர்ப்புகள்)
 // -------------------------------------------------------------------------------------------------
-export function renderStage11Blocks(caseData: PropertyCase): PDFSectionBlock[] {
+export function renderStage11Blocks(caseData: LegalCase): PDFSectionBlock[] {
   const blocks: PDFSectionBlock[] = [];
   const stage11 = caseData.stage11;
 
@@ -1001,7 +1062,7 @@ export function renderStage11Blocks(caseData: PropertyCase): PDFSectionBlock[] {
 // -------------------------------------------------------------------------------------------------
 // REUSABLE STAGE 12 BLOCK GENERATOR (Legal Strategy Simulator / சட்ட உத்தி சிமுலேட்டர்)
 // -------------------------------------------------------------------------------------------------
-export function renderStage12Blocks(caseData: PropertyCase): PDFSectionBlock[] {
+export function renderStage12Blocks(caseData: LegalCase): PDFSectionBlock[] {
   const blocks: PDFSectionBlock[] = [];
   const stage12 = caseData.stage12;
 
@@ -1184,7 +1245,7 @@ export function renderStage12Blocks(caseData: PropertyCase): PDFSectionBlock[] {
 // -------------------------------------------------------------------------------------------------
 // REUSABLE CLIENT ACTION BLOCK GENERATOR (Complete Client Action Solution)
 // -------------------------------------------------------------------------------------------------
-export function renderClientActionBlocks(caseData: PropertyCase): PDFSectionBlock[] {
+export function renderClientActionBlocks(caseData: LegalCase): PDFSectionBlock[] {
   const blocks: PDFSectionBlock[] = [];
   const reply = caseData.clientFacingReply || ({} as any);
   const immediate = caseData.immediateAction || ({} as any);
@@ -1415,7 +1476,7 @@ export function renderClientActionBlocks(caseData: PropertyCase): PDFSectionBloc
 // EXPORT VALIDATION HELPER
 // Verifies that all required stages exist before rendering the PDF
 // -------------------------------------------------------------------------------------------------
-export function validateCaseDataForExport(caseData: PropertyCase): { isValid: boolean; warnings: string[] } {
+export function validateCaseDataForExport(caseData: LegalCase): { isValid: boolean; warnings: string[] } {
   const warnings: string[] = [];
 
   if (!caseData.stage0 && !caseData.intake) warnings.push("Stage 00 intake data missing");
@@ -1443,7 +1504,7 @@ export function validateCaseDataForExport(caseData: PropertyCase): { isValid: bo
 // -------------------------------------------------------------------------------------------------
 // 1. STANDALONE STAGE 11 PDF EXPORT
 // -------------------------------------------------------------------------------------------------
-export async function downloadStage11PDF(caseData: PropertyCase, filename?: string): Promise<void> {
+export async function downloadStage11PDF(caseData: LegalCase, filename?: string): Promise<void> {
   const caseId = caseData.id || "UK360-CASE";
   const defaultFilename = `UK360_${caseId}_Stage_11_Precedent_Intelligence`;
 
@@ -1467,7 +1528,7 @@ export async function downloadStage11PDF(caseData: PropertyCase, filename?: stri
 // -------------------------------------------------------------------------------------------------
 // 2. STANDALONE STAGE 12 PDF EXPORT
 // -------------------------------------------------------------------------------------------------
-export async function downloadStage12PDF(caseData: PropertyCase, filename?: string): Promise<void> {
+export async function downloadStage12PDF(caseData: LegalCase, filename?: string): Promise<void> {
   const caseId = caseData.id || "UK360-CASE";
   const defaultFilename = `UK360_${caseId}_Stage_12_Legal_Strategy`;
 
@@ -1491,7 +1552,7 @@ export async function downloadStage12PDF(caseData: PropertyCase, filename?: stri
 // -------------------------------------------------------------------------------------------------
 // 3. STANDALONE CLIENT ACTION PLAN PDF EXPORT
 // -------------------------------------------------------------------------------------------------
-export async function downloadClientActionPDF(caseData: PropertyCase, filename?: string): Promise<void> {
+export async function downloadClientActionPDF(caseData: LegalCase, filename?: string): Promise<void> {
   const caseId = caseData.id || "UK360-CASE";
   const defaultFilename = `UK360_${caseId}_Client_Action_Plan`;
 
@@ -1516,7 +1577,7 @@ export async function downloadClientActionPDF(caseData: PropertyCase, filename?:
 // 4. COMPLETE 12-STAGE ENTERPRISE LEGAL INTELLIGENCE REPORT
 // (Guaranteed: Complete Stage 00-10 + Same Complete Stage 11 + Same Complete Stage 12 + Client Action)
 // -------------------------------------------------------------------------------------------------
-export async function downloadCompleteCaseReportPDF(caseData: PropertyCase, filename?: string): Promise<void> {
+export async function downloadCompleteCaseReportPDF(caseData: LegalCase, filename?: string): Promise<void> {
   const caseId = caseData.id || "UK360-CASE";
   const defaultFilename = `UK360_${caseId}_Complete_Case_Report`;
 

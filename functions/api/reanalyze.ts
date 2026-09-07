@@ -47,11 +47,11 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     const ai = getGeminiClient(context.env);
 
     const prompt = `
-You are the Master Legal AI Engine for the UNIKORN360 / NILAM360 PROPERTY & DISPUTE ANALYSIS PLATFORM.
+You are the Master Legal AI Engine for the UNIKORN360 UNIVERSAL LEGAL INTELLIGENCE & CASE ANALYSIS PLATFORM.
 
-An advocate/client is updating an existing property case with a NEW FACT / EVENT / DOCUMENT / COURT ORDER.
+An advocate/client is updating an existing legal case with a NEW FACT / EVENT / DOCUMENT / COURT ORDER.
 
-### EXISTING PROPERTY CASE:
+### EXISTING LEGAL CASE:
 ${JSON.stringify(existingCase)}
 
 ### NEW CASE UPDATE EVENT:
@@ -81,7 +81,7 @@ ${JSON.stringify(existingCase)}
 Format:
 \`\`\`json
 {
-  "updatedCase": { ...updated PropertyCase... },
+  "updatedCase": { ...updated LegalCase... },
   "impactSummary": {
     "newFacts": ["string"],
     "stagesAffected": [6, 9, 11, 12],

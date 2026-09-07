@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { PropertyCase, Stage1Data, Stage6Data } from "../types";
+import { LegalCase, Stage1Data, Stage6Data } from "../types";
 import { RiskGauge } from "./StatWidgets";
 import { PrecedentAndStrategyPanel } from "./PrecedentAndStrategyPanel";
 import { CaseUpdateModal } from "./CaseUpdateModal";
@@ -12,8 +12,8 @@ import {
 
 interface AnalysisDashboardProps {
   key?: any;
-  caseData: PropertyCase;
-  onUpdateCase: (updatedCase: PropertyCase, historyDesc?: string) => void;
+  caseData: LegalCase;
+  onUpdateCase: (updatedCase: LegalCase, historyDesc?: string) => void;
 }
 
 export function AnalysisDashboard({ caseData, onUpdateCase }: AnalysisDashboardProps) {
@@ -67,7 +67,7 @@ export function AnalysisDashboard({ caseData, onUpdateCase }: AnalysisDashboardP
   };
 
   const handleSaveCategory = () => {
-    const updatedCase: PropertyCase = {
+    const updatedCase: LegalCase = {
       ...caseData,
       stage1: {
         category: tempCategory,
@@ -97,7 +97,7 @@ export function AnalysisDashboard({ caseData, onUpdateCase }: AnalysisDashboardP
     setAvailableDocs(newAvailable);
     setMissingDocs(newMissing);
 
-    const updatedCase: PropertyCase = {
+    const updatedCase: LegalCase = {
       ...caseData,
       stage6: {
         available: newAvailable,
@@ -236,118 +236,226 @@ export function AnalysisDashboard({ caseData, onUpdateCase }: AnalysisDashboardP
         )}
 
         {/* Case Header Card */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs relative overflow-hidden min-w-0">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 min-w-0">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap gap-2 items-center mb-1.5">
-                <span className="badge-ai-intel">
-                  <span>AIEOS</span>
-                  <ChevronRight className="h-2.5 w-2.5 text-purple-400 shrink-0" />
-                  <span>Citizen360</span>
-                  <ChevronRight className="h-2.5 w-2.5 text-purple-400 shrink-0" />
-                  <span>{caseData.subWorkspace || caseData.stage0?.subWorkspace || "Property360"}</span>
-                  <ChevronRight className="h-2.5 w-2.5 text-purple-400 shrink-0" />
-                  <span>{caseData.module || caseData.stage0?.module || "Engine"}</span>
-                </span>
-                <span className="badge-neutral-status">
-                  {t("வழக்கு ID", "Case ID")}: UK360-{(caseData.stage0?.district || "TN").toUpperCase().slice(0,3)}-{caseData.id?.slice(-4) || "0000"}
-                </span>
-                <span className="text-xs font-bold text-slate-600 break-words [overflow-wrap:anywhere]">
-                  {t("சர்வே எண்", "Survey No")} #{caseData.stage0?.surveyNumber} • {caseData.stage0?.village}, {caseData.stage0?.district}
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-slate-900 tracking-tight leading-snug font-display break-words [overflow-wrap:anywhere] [word-break:normal]">
-                {caseData.stage0?.clientName} {t("அவர்களின் வழக்கு மேலாண்மை", "Case Management File")}
-              </h3>
-              <p className="text-xs text-slate-600 mt-1 font-medium flex flex-wrap items-center gap-1.5 break-words">
-                <Landmark className="h-3.5 w-3.5 text-purple-800 shrink-0" />
-                <span>{t("வட்டம் (தாலுகா)", "Taluk")}: {caseData.stage0?.taluk || "N/A"} | {t("எதிர் தரப்பினர்", "Opposite Party")}: {caseData.stage0?.oppositeParty || "N/A"}</span>
-              </p>
-            </div>
-            
-            <div className="flex flex-wrap items-center gap-3 shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsUpdateModalOpen(true)}
-                className="btn-primary-purple"
-              >
-                <PlusCircle className="h-4 w-4" />
-                <span>{t("➕ வழக்கு அப்டேட்", "➕ Update Case")}</span>
-              </button>
+        {(() => {
+          const meta = caseData.domainMetadata || caseData.intake?.domainMetadata || {};
+          const propMeta = meta.PROPERTY || meta.property_revenue_reg;
+          const crimMeta = meta.CRIMINAL || meta.criminal_bns;
+          const taxMeta = meta.TAX || meta.taxation_gst || meta.direct_indirect_tax;
+          const femaMeta = meta.FEMA || meta.fema_cross_border;
+          const consMeta = meta.CONSUMER || meta.consumer_cpa;
+          const cyberMeta = meta.CYBER || meta.cyber_it_act;
+          const corpMeta = meta.CORPORATE || meta.corporate_nclt;
 
-              <div className="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200 self-start md:self-auto min-w-[130px]">
-                <div className="text-left flex-1">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">
-                    {t("அச்சுறுத்தல் நிலை", "Threat Level")}
-                  </span>
-                  <span className="text-xs font-extrabold text-rose-700 block leading-tight">{caseData.stage9?.rating || "HIGH RISK"}</span>
+          const isPropertyDomain = 
+            caseData.primaryDomain === "property_revenue_reg" || 
+            caseData.subWorkspace === "Property360" || 
+            caseData.stage0?.subWorkspace === "Property360" ||
+            caseData.activeDomainPacks?.includes("property_revenue_reg") ||
+            Boolean(propMeta?.surveyNumber || (caseData.stage0?.surveyNumber && caseData.stage0.surveyNumber !== "N/A" && caseData.stage0.surveyNumber !== "None"));
+
+          const displaySubWorkspace = isPropertyDomain ? "Property360" : (caseData.subWorkspace || caseData.stage0?.subWorkspace || "Legal360");
+          const displayModule = caseData.module || caseData.stage0?.module || (isPropertyDomain ? "Registration" : "LegalTriageAI");
+
+          let domainIdentifier = "";
+          if (crimMeta?.firNumber) {
+            domainIdentifier = `FIR #${crimMeta.firNumber} • ${crimMeta.policeStation || caseData.stage0?.district || "Jurisdiction"}`;
+          } else if (taxMeta?.assessmentYear || taxMeta?.noticeSection) {
+            domainIdentifier = `AY ${taxMeta.assessmentYear || "N/A"} • Sec ${taxMeta.noticeSection || "Notice"}`;
+          } else if (femaMeta?.overseasEntity) {
+            domainIdentifier = `FEMA • ${femaMeta.overseasEntity}`;
+          } else if (consMeta?.claimAmount) {
+            domainIdentifier = `Claim: ₹${consMeta.claimAmount} • ${caseData.stage0?.district || "Forum"}`;
+          } else if (cyberMeta?.acknowledgementNumber) {
+            domainIdentifier = `Cyber Ack #${cyberMeta.acknowledgementNumber}`;
+          } else if (corpMeta?.cinOrLlpIn) {
+            domainIdentifier = `CIN: ${corpMeta.cinOrLlpIn}`;
+          } else if (propMeta?.surveyNumber || (caseData.stage0?.surveyNumber && caseData.stage0.surveyNumber !== "N/A" && caseData.stage0.surveyNumber !== "None")) {
+            domainIdentifier = `${t("சர்வே எண்", "Survey No")} #${propMeta?.surveyNumber || caseData.stage0?.surveyNumber} • ${propMeta?.village || caseData.stage0?.village || ""}, ${caseData.stage0?.district || ""}`;
+          } else {
+            domainIdentifier = `${caseData.stage0?.district || "Tamil Nadu"} • ${caseData.stage1?.category || "Universal Legal Triage"}`;
+          }
+
+          return (
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs relative overflow-hidden min-w-0">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 min-w-0">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap gap-2 items-center mb-1.5">
+                    <span className="badge-ai-intel">
+                      <span>AIEOS</span>
+                      <ChevronRight className="h-2.5 w-2.5 text-purple-400 shrink-0" />
+                      <span>Citizen360</span>
+                      <ChevronRight className="h-2.5 w-2.5 text-purple-400 shrink-0" />
+                      <span>{displaySubWorkspace}</span>
+                      <ChevronRight className="h-2.5 w-2.5 text-purple-400 shrink-0" />
+                      <span>{displayModule}</span>
+                    </span>
+                    <span className="badge-neutral-status">
+                      {t("வழக்கு ID", "Case ID")}: UK360-{(caseData.stage0?.district || "TN").toUpperCase().slice(0,3)}-{caseData.id?.slice(-4) || "0000"}
+                    </span>
+                    <span className="text-xs font-bold text-slate-600 break-words [overflow-wrap:anywhere]">
+                      {domainIdentifier}
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900 tracking-tight leading-snug font-display break-words [overflow-wrap:anywhere] [word-break:normal]">
+                    {caseData.stage0?.clientName || t("மனுதாரர்", "Client")} {t("அவர்களின் வழக்கு மேலாண்மை", "Case Management File")}
+                  </h3>
+                  <p className="text-xs text-slate-600 mt-1 font-medium flex flex-wrap items-center gap-1.5 break-words">
+                    <Landmark className="h-3.5 w-3.5 text-purple-800 shrink-0" />
+                    <span>
+                      {caseData.stage0?.taluk ? `${t("வட்டம் (தாலுகா)", "Taluk")}: ${caseData.stage0.taluk} | ` : ""}
+                      {caseData.stage0?.courtOrForum ? `${t("நீதிமன்றம் / அதிகாரி", "Forum / Authority")}: ${caseData.stage0.courtOrForum} | ` : ""}
+                      {t("எதிர் தரப்பினர்", "Opposite Party")}: {caseData.stage0?.oppositeParty || "N/A"}
+                    </span>
+                  </p>
                 </div>
-                <div className="text-right">
-                  <span className="text-xl font-black text-slate-900 leading-none">{caseData.stage9?.score || 45}</span>
-                  <span className="text-[9px] text-slate-500 font-bold block">/100</span>
+                
+                <div className="flex flex-wrap items-center gap-3 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsUpdateModalOpen(true)}
+                    className="btn-primary-purple"
+                  >
+                    <PlusCircle className="h-4 w-4" />
+                    <span>{t("➕ வழக்கு அப்டேட்", "➕ Update Case")}</span>
+                  </button>
+
+                  <div className="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200 self-start md:self-auto min-w-[130px]">
+                    <div className="text-left flex-1">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">
+                        {t("அச்சுறுத்தல் நிலை", "Threat Level")}
+                      </span>
+                      <span className="text-xs font-extrabold text-rose-700 block leading-tight">{caseData.stage9?.rating || "HIGH RISK"}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xl font-black text-slate-900 leading-none">{caseData.stage9?.score || 45}</span>
+                      <span className="text-[9px] text-slate-500 font-bold block">/100</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* Stage 00 Card: Intake Identifiers */}
-        <div id="stage-00" className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4 relative min-w-0">
-          <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-slate-200">
-            <span className="w-1.5 h-3.5 bg-purple-700 rounded mr-1"></span>
-            <span className="text-[10px] font-bold text-slate-500 uppercase">{t("நிலை 00", "Stage 00")}</span>
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              {t("வாடிக்கையாளர் வழக்கு அடையாளங்கள்", "Client & Case Profile Identifiers")}
-            </h4>
-          </div>
+        {(() => {
+          const meta = caseData.domainMetadata || caseData.intake?.domainMetadata || {};
+          const propMeta = meta.PROPERTY || meta.property_revenue_reg;
+          const crimMeta = meta.CRIMINAL || meta.criminal_bns;
+          const taxMeta = meta.TAX || meta.taxation_gst || meta.direct_indirect_tax;
+          const femaMeta = meta.FEMA || meta.fema_cross_border;
+          const consMeta = meta.CONSUMER || meta.consumer_cpa;
+          const cyberMeta = meta.CYBER || meta.cyber_it_act;
+          const corpMeta = meta.CORPORATE || meta.corporate_nclt;
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
-              <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("வாடிக்கையாளர் பெயர்", "Client Name")}</span>
-              <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] [word-break:normal] block">{caseData.stage0?.clientName || "N/A"}</span>
-            </div>
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
-              <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("கைபேசி எண்", "Mobile Number")}</span>
-              <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{caseData.stage0?.mobile || "N/A"}</span>
-            </div>
-            {caseData.stage0?.surveyNumber && caseData.stage0.surveyNumber !== "N/A" && (
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
-                <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("சர்வே எண்", "Survey Number")}</span>
-                <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{caseData.stage0?.surveyNumber}</span>
+          return (
+            <div id="stage-00" className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4 relative min-w-0">
+              <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-slate-200">
+                <span className="w-1.5 h-3.5 bg-purple-700 rounded mr-1"></span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase">{t("நிலை 00", "Stage 00")}</span>
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  {t("வாடிக்கையாளர் வழக்கு அடையாளங்கள்", "Client & Case Profile Identifiers")}
+                </h4>
               </div>
-            )}
-            {caseData.stage0?.village && caseData.stage0.village !== "N/A" && (
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
-                <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("கிராமம் & வட்டம் (தாலுகா)", "Village & Taluk")}</span>
-                <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] [word-break:normal] block">{caseData.stage0?.village}, {caseData.stage0?.taluk}</span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("வாடிக்கையாளர் பெயர்", "Client Name")}</span>
+                  <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] [word-break:normal] block">{caseData.stage0?.clientName || "N/A"}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("கைபேசி எண்", "Mobile Number")}</span>
+                  <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{caseData.stage0?.mobile || "N/A"}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("மாவட்டம் / பகுதி", "District / Location")}</span>
+                  <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{caseData.stage0?.district || "Tamil Nadu"}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("எதிர் தரப்பினர்", "Opposite Party")}</span>
+                  <span className="font-bold text-rose-700 break-words [overflow-wrap:anywhere] [word-break:normal] block">{caseData.stage0?.oppositeParty || "N/A"}</span>
+                </div>
+
+                {/* Optional Property Domain Fields */}
+                {(propMeta?.surveyNumber || (caseData.stage0?.surveyNumber && caseData.stage0.surveyNumber !== "N/A" && caseData.stage0.surveyNumber !== "None")) && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("சர்வே எண்", "Survey Number")}</span>
+                    <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{propMeta?.surveyNumber || caseData.stage0?.surveyNumber}</span>
+                  </div>
+                )}
+                {(propMeta?.village || (caseData.stage0?.village && caseData.stage0.village !== "N/A" && caseData.stage0.village !== "None")) && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("கிராமம் & வட்டம்", "Village & Taluk")}</span>
+                    <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] [word-break:normal] block">
+                      {propMeta?.village || caseData.stage0?.village}{caseData.stage0?.taluk ? `, ${caseData.stage0.taluk}` : ""}
+                    </span>
+                  </div>
+                )}
+
+                {/* Optional Criminal Domain Fields */}
+                {crimMeta?.firNumber && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("முதல் தகவல் அறிக்கை (FIR)", "FIR & Police Station")}</span>
+                    <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">FIR #{crimMeta.firNumber} • {crimMeta.policeStation || "N/A"}</span>
+                  </div>
+                )}
+
+                {/* Optional Tax Domain Fields */}
+                {taxMeta?.assessmentYear && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("மதிப்பீட்டு ஆண்டு & பிரிவு", "AY & Notice Section")}</span>
+                    <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">AY {taxMeta.assessmentYear} • Sec {taxMeta.noticeSection || "N/A"}</span>
+                  </div>
+                )}
+
+                {/* Optional FEMA Domain Fields */}
+                {femaMeta?.overseasEntity && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("FEMA வெளிநாட்டு நிறுவனம்", "FEMA Overseas Entity")}</span>
+                    <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{femaMeta.overseasEntity}</span>
+                  </div>
+                )}
+
+                {/* Optional Consumer Domain Fields */}
+                {consMeta?.claimAmount && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("நுகர்வோர் கோரிக்கை தொகை", "Consumer Claim Amount")}</span>
+                    <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">₹{consMeta.claimAmount}</span>
+                  </div>
+                )}
+
+                {/* Optional Cyber Domain Fields */}
+                {cyberMeta?.acknowledgementNumber && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("சைபர் புகார் எண்", "Cyber Ack Number")}</span>
+                    <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">Ack #{cyberMeta.acknowledgementNumber}</span>
+                  </div>
+                )}
+
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("நீதிமன்றம் / அதிகார அமைப்பு", "Forum / Authority")}</span>
+                  <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{caseData.stage0?.courtOrForum || "Jurisdictional Court / Forum"}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("வழக்கறிஞர் வழக்கு உள்ளதா?", "Pending Court Case?")}</span>
+                  <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">
+                    {caseData.stage0?.existingAdvocate === "Yes" 
+                      ? t(`ஆம் (${caseData.stage0?.existingCaseNumber || "நிலுவையில்"})`, `Yes (${caseData.stage0?.existingCaseNumber || "Pending"})`)
+                      : t("இல்லை", "No")}
+                  </span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("கால வரம்பு அச்சுறுத்தல்", "Limitation Risk")}</span>
+                  <span className={`font-bold block break-words ${caseData.stage0?.limitationRisk === "Yes" ? "text-rose-700" : "text-emerald-700"}`}>
+                    {caseData.stage0?.limitationRisk === "Yes" 
+                      ? t("செயலில் உள்ள அச்சுறுத்தல்", "Active Limitation Threat") 
+                      : t("எதுவுமில்லை", "None Detected")}
+                  </span>
+                </div>
               </div>
-            )}
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
-              <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("மாவட்டம்", "District")}</span>
-              <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">{caseData.stage0?.district}</span>
             </div>
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
-              <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("எதிர் தரப்பினர்", "Opposite Party")}</span>
-              <span className="font-bold text-rose-700 break-words [overflow-wrap:anywhere] [word-break:normal] block">{caseData.stage0?.oppositeParty || "N/A"}</span>
-            </div>
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
-              <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("வழக்கறிஞர் வழக்கு உள்ளதா?", "Pending Court Case?")}</span>
-              <span className="font-bold text-slate-900 break-words [overflow-wrap:anywhere] block">
-                {caseData.stage0?.existingAdvocate === "Yes" 
-                  ? t(`ஆம் (${caseData.stage0?.existingCaseNumber || "நிலுவையில்"})`, `Yes (${caseData.stage0?.existingCaseNumber || "Pending"})`)
-                  : t("இல்லை", "No")}
-              </span>
-            </div>
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 min-w-0">
-              <span className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">{t("கால வரம்பு அச்சுறுத்தல்", "Limitation Risk")}</span>
-              <span className={`font-bold block break-words ${caseData.stage0?.limitationRisk === "Yes" ? "text-rose-700" : "text-emerald-700"}`}>
-                {caseData.stage0?.limitationRisk === "Yes" 
-                  ? t("செயலில் உள்ள அச்சுறுத்தல்", "Active Limitation Threat") 
-                  : t("எதுவுமில்லை", "None Detected")}
-              </span>
-            </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* Multi-Domain Classification & Triage Banner */}
         {caseData.multiDomainClassification && (

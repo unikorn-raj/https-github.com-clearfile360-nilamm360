@@ -38,31 +38,72 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     }
 
     const workspace = intake?.workspace || "Citizen360";
-    const subWorkspace = intake?.subWorkspace || "Property360";
-    const module = intake?.module || "Registration";
-    const engine = intake?.engine || "CaseClassificationAI";
+    const subWorkspace = intake?.subWorkspace || "Legal360";
+    const module = intake?.module || "LegalTriageAI";
+    const engine = intake?.engine || "UniversalLegalReasoningEngine";
+
+    const meta = intake?.domainMetadata || {};
+    const propMeta = meta.PROPERTY || meta.property_revenue_reg;
+    const crimMeta = meta.CRIMINAL || meta.criminal_bns;
+    const taxMeta = meta.TAX || meta.taxation_gst || meta.direct_indirect_tax;
+    const femaMeta = meta.FEMA || meta.fema_cross_border;
+    const consMeta = meta.CONSUMER || meta.consumer_cpa;
+    const cyberMeta = meta.CYBER || meta.cyber_it_act;
+    const corpMeta = meta.CORPORATE || meta.corporate_nclt;
 
     const safeIntake = {
       workspace: String(workspace).slice(0, 50),
       subWorkspace: String(subWorkspace).slice(0, 50),
       module: String(module).slice(0, 50),
       engine: String(engine).slice(0, 50),
-      clientName: String(intake?.clientName || "Unknown").slice(0, 100),
-      mobile: String(intake?.mobile || "Unknown").slice(0, 20),
-      surveyNumber: String(intake?.surveyNumber || "N/A").slice(0, 100),
-      village: String(intake?.village || "N/A").slice(0, 100),
-      taluk: String(intake?.taluk || "N/A").slice(0, 100),
-      district: String(intake?.district || "Madurai").slice(0, 100),
-      oppositeParty: String(intake?.oppositeParty || "Opposite Party").slice(0, 100),
+      clientName: String(intake?.clientName || "Client / Complainant").slice(0, 100),
+      mobile: String(intake?.mobile || "Not Provided").slice(0, 20),
+      district: String(intake?.district || "Tamil Nadu / Jurisdiction").slice(0, 100),
+      oppositeParty: String(intake?.oppositeParty || "Opposite Party / Respondent").slice(0, 100),
       partyRelationship: String(intake?.partyRelationship || "Disputing Parties").slice(0, 100),
-      courtOrForum: String(intake?.courtOrForum || "Jurisdictional Authority / Court").slice(0, 100),
+      courtOrForum: String(intake?.courtOrForum || "Jurisdictional Court / Forum").slice(0, 100),
       existingAdvocate: String(intake?.existingAdvocate || "No").slice(0, 50),
       existingCaseNumber: String(intake?.existingCaseNumber || "None").slice(0, 100),
       limitationRisk: String(intake?.limitationRisk || "No").slice(0, 50),
+      primaryDomain: intake?.primaryDomain || (subWorkspace === "Property360" ? "property_revenue_reg" : "general_triage"),
+      activeDomainPacks: Array.isArray(intake?.activeDomainPacks) ? intake.activeDomainPacks : [],
+      domainMetadata: meta
     };
 
     const safeNarrative = sanitizePromptInput(rawDescription.slice(0, 20000));
     const ai = getGeminiClient(context.env);
+
+    // Build domain-specific contextual string
+    const domainContextParts: string[] = [];
+    if (crimMeta?.firNumber || crimMeta?.policeStation) {
+      domainContextParts.push(`- Criminal Details: FIR #${crimMeta.firNumber || "N/A"}, Police Station: ${crimMeta.policeStation || "N/A"}, Sections: ${crimMeta.sectionsApplied || "N/A"}`);
+    }
+    if (taxMeta?.assessmentYear || taxMeta?.noticeSection) {
+      domainContextParts.push(`- Taxation Details: AY ${taxMeta.assessmentYear || "N/A"}, Notice Section: ${taxMeta.noticeSection || "N/A"}, DIN: ${taxMeta.dinNumber || "N/A"}`);
+    }
+    if (femaMeta?.overseasEntity || femaMeta?.transactionRef) {
+      domainContextParts.push(`- FEMA / Cross-Border: Overseas Entity: ${femaMeta.overseasEntity || "N/A"}, Transaction Ref: ${femaMeta.transactionRef || "N/A"}`);
+    }
+    if (consMeta?.claimAmount || consMeta?.productOrService) {
+      domainContextParts.push(`- Consumer Details: Claim Amount: ₹${consMeta.claimAmount || "N/A"}, Product/Service: ${consMeta.productOrService || "N/A"}`);
+    }
+    if (cyberMeta?.acknowledgementNumber || cyberMeta?.platformOrIntermediary) {
+      domainContextParts.push(`- Cyber Details: Ack #${cyberMeta.acknowledgementNumber || "N/A"}, Platform: ${cyberMeta.platformOrIntermediary || "N/A"}`);
+    }
+    if (corpMeta?.cinOrLlpIn || corpMeta?.tribunalBench) {
+      domainContextParts.push(`- Corporate Details: CIN/LLPIN: ${corpMeta.cinOrLlpIn || "N/A"}, Tribunal Bench: ${corpMeta.tribunalBench || "N/A"}`);
+    }
+    if (propMeta?.surveyNumber || (intake?.surveyNumber && intake.surveyNumber !== "N/A" && intake.surveyNumber !== "None" && intake.surveyNumber !== "")) {
+      domainContextParts.push(`- Property / Revenue Details: Survey #${propMeta?.surveyNumber || intake?.surveyNumber}, Village: ${propMeta?.village || intake?.village || "N/A"}, Taluk: ${propMeta?.taluk || intake?.taluk || "N/A"}`);
+    }
+
+    const domainContextStr = domainContextParts.length > 0 ? domainContextParts.join("\n") + "\n" : "";
+
+    const isPropertySpecialist = 
+      safeIntake.primaryDomain === "property_revenue_reg" || 
+      safeIntake.subWorkspace === "Property360" || 
+      safeIntake.module === "Registration" ||
+      safeIntake.activeDomainPacks.includes("property_revenue_reg");
 
     let prompt = "";
     if (safeIntake.module === "Consumer360") {
@@ -83,7 +124,7 @@ Your mandate is to answer one central question:
 - Party Relationship Context: ${safeIntake.partyRelationship}
 - Existing Advocate / Case: ${safeIntake.existingAdvocate} (${safeIntake.existingCaseNumber})
 - Limitation / Urgency Risk?: ${safeIntake.limitationRisk}
-
+${domainContextStr}
 ### RAW CONSUMER DISPUTE NARRATIVE:
 "${safeNarrative}"
 
@@ -112,9 +153,31 @@ D. Immediate Actions
 E. Service Package
 F. Custom Document Draft
 `;
-    } else if (safeIntake.subWorkspace === "Legal360") {
+    } else if (isPropertySpecialist) {
       prompt = `
-You are the Master Legal AI Engine for the UNIKORN360 LEGAL CASE SOLUTION FRAMEWORK v2.0.
+You are the Specialist AI Engine for the UNIKORN360 PROPERTY & LAND REVENUE SPECIALIST DOMAIN.
+Analyze the following property and land revenue dispute using the UNIKORN360 12-STAGE CASE SOLVING FRAMEWORK with STAGE 11 PRECEDENT INTELLIGENCE & STAGE 12 STRATEGY SIMULATOR.
+
+### CLIENT INTAKE DETAILS (Stage 0):
+- Client Name: ${safeIntake.clientName}
+- Mobile: ${safeIntake.mobile}
+- District / Location: ${safeIntake.district}
+- Opposite Party: ${safeIntake.oppositeParty}
+- Forum / Authority: ${safeIntake.courtOrForum}
+- Existing Advocate / Case: ${safeIntake.existingAdvocate} (${safeIntake.existingCaseNumber})
+- Limitation Risk?: ${safeIntake.limitationRisk}
+${domainContextStr}
+### RAW PROPERTY DISPUTE NARRATIVE:
+"${safeNarrative}"
+
+---
+
+### INSTRUCTIONS:
+Perform a deep and meticulous legal and administrative analysis based on property and land revenue laws (including Patta mutation, SRO registration rules, Section 77A of Registration Act for fraudulent documents, UDR/FMB errors, and Civil Court remedies) including Stage 11 Precedent Intelligence and Stage 12 Strategy & Outcome Simulator.
+`;
+    } else {
+      prompt = `
+You are the Master Legal AI Engine for the UNIKORN360 UNIVERSAL LEGAL360 CASE SOLVING FRAMEWORK v2.0.
 Perform a problem-solving centered legal analysis for the specified legal module: "${safeIntake.module}".
 
 ### CLIENT INTAKE DETAILS (Stage 0):
@@ -129,20 +192,21 @@ Perform a problem-solving centered legal analysis for the specified legal module
 - Party Relationship Context: ${safeIntake.partyRelationship}
 - Existing Advocate / Proceedings?: ${safeIntake.existingAdvocate} (${safeIntake.existingCaseNumber})
 - Limitation / Urgency Risk?: ${safeIntake.limitationRisk}
-
+- Primary Domain: ${safeIntake.primaryDomain}
+${domainContextStr}
 ### RAW CLIENT CASE NARRATIVE:
 "${safeNarrative}"
 
 ---
 
-### UNIKORN360 LEGAL CASE SOLUTION FRAMEWORK (10 STAGES):
+### UNIKORN360 LEGAL CASE SOLUTION FRAMEWORK (12 STAGES):
 1. STAGE 1. Case Classification
 2. STAGE 2. Core Legal Problem
 3. STAGE 3. Parties & Relationship
-4. STAGE 4. Cause of Action
+4. STAGE 4. Cause of Action Timeline
 5. STAGE 5. Rights & Liabilities
 6. STAGE 6. Evidence Assessment
-7. STAGE 7. Legal Route
+7. STAGE 7. Legal Route & Hierarchical Forum Map
 8. STAGE 8. Remedy Strategy
 9. STAGE 9. Risk & Urgency Analysis
 10. STAGE 10. Deliverables & Execution
@@ -156,31 +220,6 @@ C. Documents Required
 D. Immediate Actions
 E. Service Package
 F. Custom Document Draft
-`;
-    } else {
-      prompt = `
-You are the AI Orchestration Engine for the UNIKORN360 PROPERTY & LAND REVENUE CASE SOLVING SYSTEM.
-Analyze the following raw property dispute from Tamil Nadu using the UNIKORN360 PROPERTY CASE SOLVING FRAMEWORK v2.0 with STAGE 11 PRECEDENT INTELLIGENCE & STAGE 12 STRATEGY SIMULATOR.
-
-### CLIENT INTAKE DETAILS (Stage 0):
-- Client Name: ${safeIntake.clientName}
-- Mobile: ${safeIntake.mobile}
-- Survey Number: ${safeIntake.surveyNumber}
-- Village: ${safeIntake.village}
-- Taluk: ${safeIntake.taluk}
-- District: ${safeIntake.district}
-- Opposite Party: ${safeIntake.oppositeParty}
-- Existing Advocate?: ${safeIntake.existingAdvocate}
-- Existing Case Number?: ${safeIntake.existingCaseNumber}
-- Limitation Risk?: ${safeIntake.limitationRisk}
-
-### RAW CLIENT CASE NARRATIVE:
-"${safeNarrative}"
-
----
-
-### INSTRUCTIONS:
-Perform a deep and meticulous legal and administrative analysis based on Tamil Nadu property laws (including Patta mutation, SRO registration rules, Section 77A of Registration Act for fraudulent documents, UDR/FMB errors, and Civil Court remedies) including Stage 11 Precedent Intelligence and Stage 12 Strategy & Outcome Simulator.
 `;
     }
 

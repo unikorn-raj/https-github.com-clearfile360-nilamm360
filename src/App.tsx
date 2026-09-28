@@ -1744,6 +1744,9 @@ ${selectedCase.stage6?.available?.map(d => `✓ ${d}`).join("\n") || "N/A"}
         currentCaseCount={cases.length}
         onSelectPlan={handleSelectPlan}
         isLimitReachedNotice={isLimitNotice}
+        userId={user?.id}
+        userEmail={user?.email}
+        userName={user?.user_metadata?.full_name || user?.user_metadata?.name || (user?.email ? user.email.split("@")[0] : undefined)}
       />
 
       {/* Android APK & PWA Installation Modal */}

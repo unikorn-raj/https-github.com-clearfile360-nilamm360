@@ -1,4 +1,5 @@
 import { PlanType } from "../types";
+export type { PlanType };
 
 export type PlanCategory = "citizen" | "professional" | "enterprise";
 

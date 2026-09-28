@@ -4,6 +4,8 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import crypto from "crypto";
+import Razorpay from "razorpay";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { 
   LEGAL_DOMAIN_PACKS, 
@@ -13,6 +15,7 @@ import {
   LegalDomainId,
   LegalDomainPack 
 } from "./src/data/legalDomainPacks";
+import { PLAN_CONFIGS, PlanType } from "./src/data/pricingMaster";
 
 dotenv.config();
 
@@ -28,7 +31,7 @@ app.use((req, res, next) => {
   res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' 'unsafe-inline' https://apis.google.com https://*.supabase.co https://*.supabase.com; connect-src 'self' https: wss:; img-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; frame-src 'self' https:;"
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://apis.google.com https://checkout.razorpay.com https://*.razorpay.com https://*.supabase.co https://*.supabase.com; connect-src 'self' https: wss:; img-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; frame-src 'self' https: https://api.razorpay.com https://checkout.razorpay.com;"
   );
   next();
 });
@@ -1969,6 +1972,272 @@ app.get("/api/admin/users", async (req: express.Request & { user?: any }, res: e
     return res.status(500).json({ error: err.message || "Internal server error" });
   }
 });
+
+// ==========================================
+// RAZORPAY PAYMENT GATEWAY ENDPOINTS
+// ==========================================
+
+// Initialize Razorpay SDK instance
+const getRazorpayInstance = () => {
+  const key_id = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || "";
+  const key_secret = process.env.RAZORPAY_KEY_SECRET || "";
+
+  if (!key_id || !key_secret) {
+    return null;
+  }
+  return new Razorpay({ key_id, key_secret });
+};
+
+// 1. Get Public Razorpay Configuration Status
+app.get("/api/payments/config", (req, res) => {
+  const keyId = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || "";
+  const isConfigured = Boolean(keyId && keyId.trim() !== "");
+  const isTestMode = keyId.startsWith("rzp_test_");
+
+  return res.json({
+    keyId: isConfigured ? keyId : "rzp_test_ThKtF6WLOTD8G2",
+    isConfigured,
+    isTestMode,
+    currency: "INR",
+    merchantName: "Unikorn360 Legal Intelligence"
+  });
+});
+
+// Handler for Create Order (supports /api/create-order and /api/payments/create-order)
+const handleCreateOrder = async (req: express.Request, res: express.Response) => {
+  try {
+    const { amount, currency = "INR", receipt, planId, userId, userEmail, userName, notes = {} } = req.body;
+
+    let finalAmountInPaise = 0;
+    let computedReceipt = receipt;
+    let selectedPlanName = "";
+
+    if (planId && PLAN_CONFIGS[planId as PlanType]) {
+      const plan = PLAN_CONFIGS[planId as PlanType];
+      const basePriceInr = plan.priceAmount;
+      const gstAmountInr = Math.round(basePriceInr * 0.18);
+      const totalPriceInr = basePriceInr + gstAmountInr;
+      finalAmountInPaise = totalPriceInr * 100; // in paise
+      selectedPlanName = plan.nameTamil;
+      if (!computedReceipt) {
+        computedReceipt = `rcpt_${planId}_${Date.now().toString().slice(-8)}`;
+      }
+    } else if (typeof amount === "number" && amount > 0) {
+      // If direct amount passed in paise
+      finalAmountInPaise = Math.round(amount);
+    } else {
+      return res.status(400).json({ error: "Invalid order amount or planId provided." });
+    }
+
+    // Razorpay minimum requirement: at least 100 paise (₹1)
+    if (finalAmountInPaise < 100) {
+      return res.status(400).json({ error: "Order amount must be at least 100 paise (₹1.00)." });
+    }
+
+    if (!computedReceipt) {
+      computedReceipt = `rcpt_${Date.now().toString().slice(-10)}`;
+    }
+
+    const razorpay = getRazorpayInstance();
+    const keyId = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || "";
+
+    if (razorpay) {
+      try {
+        const order = await razorpay.orders.create({
+          amount: finalAmountInPaise,
+          currency: currency.toUpperCase(),
+          receipt: computedReceipt,
+          notes: {
+            plan_id: planId || "custom",
+            plan_name: selectedPlanName || "Custom Order",
+            user_id: userId || "guest",
+            user_email: userEmail || "",
+            user_name: userName || "",
+            ...notes
+          }
+        });
+
+        return res.json({
+          id: order.id,
+          order_id: order.id,
+          orderId: order.id,
+          amount: order.amount,
+          currency: order.currency,
+          keyId: keyId,
+          key_id: keyId,
+          receipt: order.receipt,
+          planId,
+          planName: selectedPlanName,
+          isSimulated: false
+        });
+      } catch (apiErr: any) {
+        console.error("Razorpay SDK Orders Create Error:", apiErr);
+        const statusCode = apiErr.statusCode || (apiErr.error?.code === "BAD_REQUEST_ERROR" ? 400 : 500);
+        return res.status(statusCode).json({
+          error: apiErr.error?.description || apiErr.message || "Failed to create order on Razorpay.",
+          details: apiErr
+        });
+      }
+    } else {
+      // Return 500 if credentials missing in live mode
+      return res.status(500).json({
+        error: "Razorpay credentials not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET."
+      });
+    }
+  } catch (err: any) {
+    console.error("Create Order Error:", err);
+    return res.status(500).json({ error: err.message || "Failed to create order." });
+  }
+};
+
+app.post("/api/create-order", handleCreateOrder);
+app.post("/api/payments/create-order", handleCreateOrder);
+
+// Handler for Verify Signature (supports /api/verify-payment and /api/payments/verify)
+const handleVerifyPayment = async (req: express.Request, res: express.Response) => {
+  try {
+    const { 
+      razorpay_order_id, 
+      razorpay_payment_id, 
+      razorpay_signature, 
+      planId, 
+      userId 
+    } = req.body;
+
+    // Validate mandatory parameters
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Missing required payment parameters (razorpay_order_id, razorpay_payment_id, razorpay_signature)." 
+      });
+    }
+
+    const keySecret = process.env.RAZORPAY_KEY_SECRET || "";
+    if (!keySecret) {
+      return res.status(500).json({ 
+        success: false, 
+        error: "RAZORPAY_KEY_SECRET is not configured on the server." 
+      });
+    }
+
+    // Compute expected HMAC SHA-256 signature
+    const expectedSignature = crypto
+      .createHmac("sha256", keySecret)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest("hex");
+
+    const isSignatureValid = expectedSignature === razorpay_signature;
+
+    if (!isSignatureValid) {
+      console.warn("Razorpay signature mismatch:", {
+        expected: expectedSignature,
+        received: razorpay_signature,
+        orderId: razorpay_order_id,
+        paymentId: razorpay_payment_id
+      });
+      return res.status(400).json({ 
+        success: false, 
+        error: "Invalid Razorpay payment signature. Payment verification failed." 
+      });
+    }
+
+    // If verified and user is authenticated, upgrade plan in Supabase
+    if (userId && planId && PLAN_CONFIGS[planId as PlanType] && supabaseServerClient) {
+      try {
+        await supabaseServerClient
+          .from("profiles")
+          .update({
+            plan: planId,
+            status: "active",
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", userId);
+
+        await supabaseServerClient
+          .from("payments")
+          .insert([
+            {
+              user_id: userId,
+              plan_id: planId,
+              order_id: razorpay_order_id,
+              payment_id: razorpay_payment_id,
+              amount: PLAN_CONFIGS[planId as PlanType].priceAmount * 1.18,
+              currency: "INR",
+              status: "captured",
+              created_at: new Date().toISOString()
+            }
+          ])
+          .select();
+      } catch (dbErr) {
+        console.warn("Supabase database update notice:", dbErr);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: "Payment successfully verified.",
+      order_id: razorpay_order_id,
+      payment_id: razorpay_payment_id,
+      orderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      planId,
+      verifiedAt: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error("Payment Verification Error:", err);
+    return res.status(500).json({ error: err.message || "Failed to verify payment." });
+  }
+};
+
+app.post("/api/verify-payment", handleVerifyPayment);
+app.post("/api/payments/verify", handleVerifyPayment);
+
+// 4. Razorpay Webhook Listener for Server-to-Server Webhook Notifications
+app.post("/api/payments/webhook", async (req, res) => {
+  try {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || "";
+    const signature = req.headers["x-razorpay-signature"] as string;
+
+    if (webhookSecret && signature) {
+      const bodyString = JSON.stringify(req.body);
+      const expectedSignature = crypto
+        .createHmac("sha256", webhookSecret)
+        .update(bodyString)
+        .digest("hex");
+
+      if (expectedSignature !== signature) {
+        return res.status(400).json({ error: "Invalid webhook signature." });
+      }
+    }
+
+    const event = req.body?.event;
+    const payload = req.body?.payload;
+
+    if (event === "payment.captured" || event === "order.paid") {
+      const paymentEntity = payload?.payment?.entity;
+      const notes = paymentEntity?.notes || {};
+      const userId = notes.user_id;
+      const planId = notes.plan_id;
+
+      if (userId && planId && supabaseServerClient) {
+        await supabaseServerClient
+          .from("profiles")
+          .update({
+            plan: planId,
+            status: "active",
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", userId);
+      }
+    }
+
+    return res.json({ status: "ok" });
+  } catch (err: any) {
+    console.error("Webhook processing error:", err);
+    return res.status(500).json({ error: "Webhook handler failed." });
+  }
+});
+
 
 // Bootstrap full-stack serving
 async function startServer() {

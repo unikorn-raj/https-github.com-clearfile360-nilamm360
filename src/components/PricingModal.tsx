@@ -1,11 +1,12 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   X, Check, Zap, Crown, Shield, Award, Sparkles, ArrowRight, Briefcase, 
   CreditCard, QrCode, Building2, CheckCircle2, Lock, ArrowLeft, Copy, Clock,
-  Receipt, Download, Smartphone, AlertCircle, AlertTriangle
+  Receipt, Download, Smartphone, AlertCircle, AlertTriangle, ShieldCheck
 } from "lucide-react";
 import { UnikornLogo } from "./UnikornLogo";
 import { useLanguage } from "../lib/languageContext";
+import { startRazorpayCheckout, PaymentVerificationResult } from "../lib/razorpay";
 
 import { PlanType } from "../types";
 import { PLAN_CONFIGS, ALL_PLANS, getPlanConfig, PlanDetails } from "../data/pricingMaster";
@@ -19,6 +20,9 @@ interface PricingModalProps {
   currentCaseCount: number;
   onSelectPlan: (plan: PlanType) => void;
   isLimitReachedNotice?: boolean;
+  userEmail?: string;
+  userName?: string;
+  userId?: string;
 }
 
 export function PricingModal({
@@ -27,29 +31,29 @@ export function PricingModal({
   currentPlan,
   currentCaseCount,
   onSelectPlan,
-  isLimitReachedNotice = false
+  isLimitReachedNotice = false,
+  userEmail,
+  userName,
+  userId
 }: PricingModalProps) {
   const { t } = useLanguage();
   const [step, setStep] = useState<"select" | "checkout" | "success">("select");
 
   const [selectedPlanKey, setSelectedPlanKey] = useState<PlanType>("pro");
-  const [paymentMethod, setPaymentMethod] = useState<"upi" | "card" | "netbanking">("upi");
-  
-  // Payment Form States
-  const [upiRef, setUpiRef] = useState("");
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardExpiry, setCardExpiry] = useState("");
-  const [cardCvv, setCardCvv] = useState("");
-  const [cardName, setCardName] = useState("");
-  const [selectedBank, setSelectedBank] = useState("SBI");
-  const [netbankingUserId, setNetbankingUserId] = useState("");
-
-  // Payment Processing & Validation States
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processStatusText, setProcessStatusText] = useState("");
-  const [copiedUpi, setCopiedUpi] = useState(false);
   const [lastTxnId, setLastTxnId] = useState("");
+  const [gatewayConfig, setGatewayConfig] = useState<{ isConfigured: boolean; isTestMode: boolean } | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetch("/api/payments/config")
+        .then((res) => res.json())
+        .then((data) => setGatewayConfig(data))
+        .catch(() => setGatewayConfig({ isConfigured: false, isTestMode: true }));
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -57,12 +61,6 @@ export function PricingModal({
   const basePrice = targetPlan.priceAmount;
   const gstAmount = Math.round(basePrice * 0.18);
   const totalPrice = basePrice + gstAmount;
-
-  const handleCopyUpi = () => {
-    navigator.clipboard.writeText("nilam360.pay@upi");
-    setCopiedUpi(true);
-    setTimeout(() => setCopiedUpi(false), 2000);
-  };
 
   const handleStartCheckout = (planKey: PlanType) => {
     if (planKey === "free") {
@@ -75,158 +73,119 @@ export function PricingModal({
     setStep("checkout");
   };
 
-  const handleExecutePayment = () => {
+  const handleExecuteRazorpay = async () => {
     setPaymentError(null);
-
-    // Validate inputs based on selected payment method
-    if (paymentMethod === "upi") {
-      const cleanUpi = upiRef.trim();
-      if (!cleanUpi) {
-        setPaymentError("கட்டணப் பிழை: தயவுசெய்து உங்கள் UPI செயலியிலிருந்து (GPay/PhonePe) பெறப்பட்ட 12-இலக்க பரிவர்த்தனை எண்ணை (Reference / UTR No) உள்ளிடவும்.");
-        return;
-      }
-      if (cleanUpi.length < 10) {
-        setPaymentError("கட்டணப் பிழை: UPI குறிப்பு எண் செல்லுபடியற்றது. குறைந்தபட்சம் 10-12 இலக்கங்கள் இருக்க வேண்டும்.");
-        return;
-      }
-      if (cleanUpi === "000000000000" || cleanUpi.toLowerCase() === "test") {
-        setPaymentError("வங்கி நிராகரிப்பு: இந்த பரிவர்த்தனை எண் தவறானது அல்லது வங்கியால் நிராகரிக்கப்பட்டது.");
-        return;
-      }
-    } else if (paymentMethod === "card") {
-      const cleanCard = cardNumber.replace(/\D/g, "");
-      if (cleanCard.length < 15) {
-        setPaymentError("கார்டு பிழை: தயவுசெய்து 16-இலக்க செல்லுபடியாகும் டெபிட்/கிரெடிட் கார்டு எண்ணை உள்ளிடவும்.");
-        return;
-      }
-      if (!cardExpiry.trim() || !cardExpiry.includes("/")) {
-        setPaymentError("கார்டு பிழை: தயவுசெய்து கார்டு காலாவதி தேதியை (MM/YY) உள்ளிடவும்.");
-        return;
-      }
-      if (cardCvv.trim().length < 3) {
-        setPaymentError("கார்டு பிழை: தயவுசெய்து 3-இலக்க CVV எண்ணை உள்ளிடவும்.");
-        return;
-      }
-      if (!cardName.trim()) {
-        setPaymentError("கார்டு பிழை: தயவுசெய்து கார்டில் உள்ள உரிமையாளர் பெயரை உள்ளிடவும்.");
-        return;
-      }
-    } else if (paymentMethod === "netbanking") {
-      if (!netbankingUserId.trim()) {
-        setPaymentError("நெட்பேங்கிங் பிழை: தயவுசெய்து உங்களது வங்கியின் பயனர்/வாடிக்கையாளர் ஐடியை (User/Customer ID) உள்ளிடவும்.");
-        return;
-      }
-    }
-
     setIsProcessing(true);
-    setProcessStatusText("நிலம்360 AI கட்டண வாயிலுடன் பாதுகாப்பாக இணைக்கப்படுகிறது...");
+    setProcessStatusText("Razorpay கட்டண வாயிலுடன் பாதுகாப்பாக இணைக்கப்படுகிறது...");
 
-    setTimeout(() => {
-      setProcessStatusText("வங்கிச் சேவையகத்திலிருந்து பரிவர்த்தனை சரிபார்க்கப்படுகிறது...");
-    }, 1200);
-
-    setTimeout(() => {
-      setProcessStatusText("கட்டணம் வெற்றிகரமாக பெறப்பட்டது! உங்கள் திட்டம் உயர்த்தப்படுகிறது...");
-    }, 2400);
-
-    setTimeout(() => {
-      setIsProcessing(false);
-      let userTxn = "";
-      if (paymentMethod === "upi") {
-        userTxn = "UPI_" + upiRef.trim().toUpperCase();
-      } else if (paymentMethod === "card") {
-        const cleanCard = cardNumber.replace(/\D/g, "");
-        userTxn = "CARD_••••" + cleanCard.slice(-4);
-      } else {
-        userTxn = "NB_" + selectedBank + "_" + netbankingUserId.trim().toUpperCase();
+    await startRazorpayCheckout({
+      planId: selectedPlanKey,
+      userId: userId || "guest",
+      userEmail: userEmail || "",
+      userName: userName || "Legal360 Client",
+      onSuccess: (result: PaymentVerificationResult) => {
+        setIsProcessing(false);
+        setLastTxnId(result.paymentId || result.orderId);
+        onSelectPlan(selectedPlanKey);
+        setStep("success");
+      },
+      onError: (err: string) => {
+        setIsProcessing(false);
+        setPaymentError(err || "கட்டணம் செலுத்த முடியவில்லை அல்லது ரத்து செய்யப்பட்டது.");
+      },
+      onDismiss: () => {
+        setIsProcessing(false);
       }
-      setLastTxnId(userTxn);
-      setStep("success");
-    }, 3600);
+    });
   };
 
   const handleFinalizeUpgrade = () => {
-    onSelectPlan(selectedPlanKey);
     setStep("select");
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto font-sans selection:bg-indigo-500 selection:text-white">
-      <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl max-w-4xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-8 text-slate-100">
+    <div className="fixed inset-0 bg-stone-950/75 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto font-sans selection:bg-amber-100 selection:text-stone-900 antialiased">
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-xl max-w-4xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-6 text-stone-900">
         
         {/* STEP 1: PLAN SELECTION GRID */}
         {step === "select" && (
           <div>
             {/* Top Navigation Bar - Back to Home / Dashboard */}
-            <div className="bg-slate-950 px-4 sm:px-6 py-3 border-b border-slate-800 flex items-center justify-between gap-3">
+            <div className="bg-[#FAF9F6] px-4 sm:px-6 py-3 border-b border-stone-200 flex items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={onClose}
-                className="flex items-center gap-2 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white rounded-xl text-xs font-black transition cursor-pointer border border-slate-700 shadow-xs"
+                className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-stone-100 text-stone-800 rounded-lg text-xs font-bold transition cursor-pointer border border-stone-300 shadow-2xs"
               >
-                <ArrowLeft className="h-4 w-4 text-amber-400" />
-                <span>முகப்புப் பக்கத்திற்குத் திரும்பு (Back to Home)</span>
+                <ArrowLeft className="h-4 w-4 text-stone-700" />
+                <span>{t("முகப்புப் பக்கத்திற்குத் திரும்பு", "Back to Home")}</span>
               </button>
 
               <button
                 type="button"
                 onClick={onClose}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-white rounded-xl text-xs font-bold transition cursor-pointer border border-rose-800/50"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-xs font-bold transition cursor-pointer border border-stone-300"
               >
                 <X className="h-4 w-4" />
-                <span className="hidden sm:inline">மூடு (Close)</span>
+                <span>{t("மூடு", "Close")}</span>
               </button>
             </div>
 
-            {/* Banner header */}
-            <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-950 p-6 md:p-8 text-white relative border-b border-slate-800">
-              <div className="max-w-2xl">
+            {/* Banner Header */}
+            <div className="bg-white p-6 md:p-8 text-stone-900 relative border-b border-stone-200">
+              <div className="max-w-3xl">
                 <div className="flex flex-wrap items-center gap-2 mb-3">
                   <UnikornLogo size="sm" showText={true} />
                   {isLimitReachedNotice && (
-                    <span className="px-2.5 py-0.5 bg-rose-500 text-white text-[10px] font-black uppercase tracking-wider rounded border border-rose-400 animate-pulse ml-auto">
-                      2 வழக்குகள் வரம்பு எட்டப்பட்டது
+                    <span className="px-2.5 py-0.5 bg-rose-50 text-rose-800 border border-rose-300 text-[10px] font-mono font-bold uppercase tracking-wider rounded">
+                      2 வழக்குகள் வரம்பு எட்டப்பட்டது (Limit Reached)
                     </span>
                   )}
                 </div>
 
-                <h2 className="text-xl md:text-2xl font-black text-white leading-snug">
-                  உங்கள் தேவைக்கேற்ற சட்டப் பகுப்பாய்வு திட்டத்தைத் தேர்வு செய்யுங்கள்
+                <h2 className="text-xl md:text-2xl font-black text-stone-950 leading-snug">
+                  {t("உங்கள் தேவைக்கேற்ற சட்டப் பகுப்பாய்வு திட்டத்தைத் தேர்வு செய்யுங்கள்", "Select Your Legal Intelligence Case Plan")}
                 </h2>
-                <p className="text-xs md:text-sm text-slate-300 font-medium mt-1">
-                  தமிழ்நாடு நில வருவாய் & சொத்துத் தகராறுகளுக்கு 10-கட்ட AI துல்லிய பகுப்பாய்வு மற்றும் இருமொழி சட்ட வரைவுகள்.
+                <p className="text-xs md:text-sm text-stone-600 font-medium mt-1">
+                  {t(
+                    "18 சட்டக் களங்கள், முழுமையான AI தணிக்கை மற்றும் இருமொழி சட்ட மனு வரைவுகள்.",
+                    "18 integrated legal domains, complete AI statutory auditing, precedents and bilingual draft synthesis."
+                  )}
                 </p>
 
                 {isLimitReachedNotice && (
-                  <div className="mt-4 p-3 bg-rose-500/20 border border-rose-400/40 rounded-xl text-xs text-rose-200 font-bold flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-amber-300 shrink-0" />
+                  <div className="mt-4 p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 font-bold flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-amber-700 shrink-0" />
                     <span>
-                      இலவசத் திட்டத்தில் அதிகபட்சமாக 2 வழக்குகள் மட்டுமே அனுமதி. மேலும் வழக்குகளைச் சேர்க்க வெள்ளி அல்லது தங்கத் திட்டத்திற்கு உயர்த்தவும்!
+                      {t(
+                        "இலவசத் திட்டத்தில் அதிகபட்சமாக 2 வழக்குகள் மட்டுமே அனுமதி. கூடுதல் வழக்குகளைப் பகுப்பாய்வு செய்ய திட்டத்தை உயர்த்தவும்!",
+                        "Free tier is limited to 2 cases. Upgrade your plan to analyze additional cases seamlessly!"
+                      )}
                     </span>
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Current status bar */}
-            <div className="bg-slate-950/80 border-b border-slate-800 px-6 py-3 flex items-center justify-between text-xs font-bold text-slate-300">
+            {/* Current Status Bar */}
+            <div className="bg-[#FAF9F6] border-b border-stone-200 px-6 py-2.5 flex flex-wrap items-center justify-between text-xs font-medium text-stone-700 gap-2">
               <div className="flex items-center gap-2">
-                <Briefcase className="h-4 w-4 text-indigo-400" />
+                <Briefcase className="h-4 w-4 text-stone-600" />
                 <span>
-                  தற்போதைய பயன்பாடு: <strong className="text-indigo-300 font-black">{currentCaseCount} வழக்குகள்</strong> பதிவு செய்யப்பட்டுள்ளன.
+                  {t("தற்போதைய பயன்பாடு:", "Usage:")} <strong className="text-stone-900 font-black font-mono">{currentCaseCount} {t("வழக்குகள்", "Cases")}</strong>
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 text-indigo-200 font-black">
-                <span>செயலில் உள்ள திட்டம்:</span>
-                <span className="px-2 py-0.5 bg-indigo-600 text-white text-[10px] uppercase font-black rounded">
+              <div className="flex items-center gap-1.5 text-stone-800 font-bold">
+                <span>{t("செயலில் உள்ள திட்டம்:", "Current Plan:")}</span>
+                <span className="px-2 py-0.5 bg-stone-200 text-stone-900 text-[10px] font-mono font-bold uppercase rounded border border-stone-300">
                   {PLAN_CONFIGS[currentPlan].nameTamil}
                 </span>
               </div>
             </div>
 
             {/* Pricing Cards Grid */}
-            <div className="p-6 md:p-8 bg-slate-950/60 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+            <div className="p-6 md:p-8 bg-[#FAF9F6] grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {ALL_PLANS.map((plan) => {
                 const planKey = plan.id;
                 const isCurrent = currentPlan === planKey;
@@ -234,13 +193,15 @@ export function PricingModal({
                 return (
                   <div
                     key={plan.id}
-                    className={`bg-slate-900 rounded-2xl border transition-all duration-200 flex flex-col justify-between overflow-hidden relative ${
-                      plan.colorTheme.border
+                    className={`bg-white rounded-xl border transition-all duration-150 flex flex-col justify-between overflow-hidden relative shadow-2xs ${
+                      plan.popular
+                        ? "border-2 border-purple-900 ring-1 ring-purple-900/20"
+                        : "border-stone-200 hover:border-stone-300"
                     }`}
                   >
                     {plan.popular && (
-                      <div className="bg-amber-400 text-slate-950 text-[10px] font-black uppercase tracking-widest text-center py-1">
-                        ★ மிகவும் விரும்பப்படும் திட்டம் ★
+                      <div className="bg-purple-900 text-stone-50 text-[10px] font-mono font-bold uppercase tracking-widest text-center py-1">
+                        ★ MOST POPULAR ★
                       </div>
                     )}
 
@@ -248,33 +209,33 @@ export function PricingModal({
                       {/* Card Title & Price */}
                       <div>
                         <div className="flex items-center justify-between">
-                          <h3 className="font-black text-white text-base">{plan.nameTamil}</h3>
-                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${plan.colorTheme.badgeBg} ${plan.colorTheme.badgeText}`}>
+                          <h3 className="font-black text-stone-950 text-base">{plan.nameTamil}</h3>
+                          <span className="text-[10px] font-mono font-bold uppercase px-2 py-0.5 rounded bg-stone-100 text-stone-700 border border-stone-200">
                             {plan.badge}
                           </span>
                         </div>
-                        <p className="text-[11px] font-bold text-slate-400">{plan.nameEnglish}</p>
+                        <p className="text-[11px] font-bold text-stone-500">{plan.nameEnglish}</p>
 
                         <div className="mt-3 flex items-baseline gap-1">
-                          <span className="text-2xl font-black text-white">{plan.priceTamil}</span>
-                          <span className="text-[11px] font-bold text-slate-400">{plan.periodTamil}</span>
+                          <span className="text-2xl font-black text-stone-950">{plan.priceTamil}</span>
+                          <span className="text-[11px] font-bold text-stone-500">{plan.periodTamil}</span>
                         </div>
 
-                        <div className="mt-2 inline-block px-2.5 py-1 bg-indigo-950/60 border border-indigo-800/80 rounded-lg text-[11px] font-black text-indigo-300">
+                        <div className="mt-2 inline-block px-2 py-0.5 bg-stone-100 border border-stone-300 rounded text-[11px] font-mono font-bold text-stone-800">
                           {plan.caseLimitText}
                         </div>
                       </div>
 
-                      <p className="text-xs text-slate-300 font-medium leading-relaxed border-t border-slate-800 pt-3">
+                      <p className="text-xs text-stone-600 font-normal leading-relaxed border-t border-stone-200 pt-3">
                         {plan.description}
                       </p>
 
                       {/* Feature Checklist */}
-                      <div className="space-y-2 pt-2 border-t border-slate-800">
-                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">அம்சங்கள் (Features):</p>
+                      <div className="space-y-2 pt-2 border-t border-stone-200">
+                        <p className="text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500">அம்சங்கள் (Features):</p>
                         {plan.features.map((feat, idx) => (
-                          <div key={idx} className="flex items-start gap-2 text-xs font-medium text-slate-300">
-                            <Check className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <div key={idx} className="flex items-start gap-2 text-xs font-medium text-stone-800">
+                            <Check className="h-4 w-4 text-emerald-700 shrink-0 mt-0.5" />
                             <span>{feat}</span>
                           </div>
                         ))}
@@ -282,20 +243,22 @@ export function PricingModal({
                     </div>
 
                     {/* Footer Action Button */}
-                    <div className="p-5 bg-slate-950/80 border-t border-slate-800">
+                    <div className="p-4 bg-[#FAF9F6] border-t border-stone-200">
                       <button
                         type="button"
                         onClick={() => handleStartCheckout(planKey)}
                         disabled={isCurrent}
-                        className={`w-full py-3 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer ${
+                        className={`w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer border ${
                           isCurrent
-                            ? "bg-slate-800 text-slate-400 border border-slate-700 font-black cursor-default"
-                            : `${plan.colorTheme.buttonBg} ${plan.colorTheme.buttonHover}`
+                            ? "bg-stone-100 text-stone-400 border-stone-200 cursor-default"
+                            : plan.popular
+                              ? "bg-purple-900 hover:bg-purple-800 text-stone-50 border-purple-900 shadow-2xs"
+                              : "bg-stone-900 hover:bg-stone-800 text-stone-50 border-stone-900"
                         }`}
                       >
                         {isCurrent ? (
                           <>
-                            <Check className="h-4 w-4 text-emerald-400" />
+                            <Check className="h-4 w-4 text-emerald-600" />
                             <span>தற்போது செயலில் உள்ளது</span>
                           </>
                         ) : (
@@ -311,20 +274,20 @@ export function PricingModal({
               })}
             </div>
 
-            {/* Footer Guarantee Note & Return to Home Button */}
-            <div className="bg-slate-950 border-t border-slate-800 p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
-                <Shield className="h-4 w-4 text-amber-400 shrink-0" />
-                <span>நிலம்360 AI • தமிழ்நாடு நில வருவாய் சட்டப்பிரிவுகள் & 10-கட்ட AI பகுப்பாய்வு பாதுகாப்பு உத்தரவாதம்.</span>
+            {/* Footer Guarantee Note */}
+            <div className="bg-white border-t border-stone-200 p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-2 text-xs text-stone-600 font-medium">
+                <ShieldCheck className="h-4 w-4 text-emerald-700 shrink-0" />
+                <span>Unikorn360 Legal Intelligence • 256-bit SSL Verified Razorpay Gateway with UPI & Cards.</span>
               </div>
 
               <button
                 type="button"
                 onClick={onClose}
-                className="w-full sm:w-auto px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-2 border border-slate-700 cursor-pointer shrink-0 shadow-sm"
+                className="w-full sm:w-auto px-4 py-2 bg-white hover:bg-stone-100 text-stone-800 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 border border-stone-300 cursor-pointer shrink-0"
               >
-                <ArrowLeft className="h-4 w-4 text-amber-400" />
-                <span>முகப்புப் பக்கத்திற்குத் திரும்பு (Return to Home)</span>
+                <ArrowLeft className="h-4 w-4 text-stone-700" />
+                <span>{t("முகப்புக்குத் திரும்பு", "Return to Home")}</span>
               </button>
             </div>
           </div>
@@ -334,305 +297,150 @@ export function PricingModal({
         {step === "checkout" && (
           <div className="p-6 md:p-8 space-y-6">
             {/* Top Navigation & Title */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-800 pb-4 gap-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-stone-200 pb-4 gap-3">
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setStep("select")}
                   disabled={isProcessing}
-                  className="flex items-center gap-2 text-xs font-black text-amber-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-3.5 py-2 rounded-xl transition cursor-pointer border border-slate-700"
+                  className="flex items-center gap-2 text-xs font-bold text-stone-800 bg-white hover:bg-stone-100 px-3 py-1.5 rounded-lg transition cursor-pointer border border-stone-300"
                 >
-                  <ArrowLeft className="h-4 w-4 text-amber-400" />
-                  <span>திட்டங்கள் தேர்வுக்குத் திரும்பு (Back to Plans)</span>
+                  <ArrowLeft className="h-4 w-4 text-stone-700" />
+                  <span>{t("திட்டங்கள் தேர்வுக்குத் திரும்பு", "Back to Plans")}</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={onClose}
                   disabled={isProcessing}
-                  className="flex items-center gap-1.5 text-xs font-bold text-rose-300 hover:text-white bg-rose-950/40 hover:bg-rose-900/60 px-3 py-2 rounded-xl transition cursor-pointer border border-rose-800/50"
+                  className="flex items-center gap-1.5 text-xs font-bold text-stone-700 bg-stone-100 hover:bg-stone-200 px-3 py-1.5 rounded-lg transition cursor-pointer border border-stone-300"
                 >
                   <X className="h-4 w-4" />
-                  <span>முகப்புக்குத் திரும்பு (Back to Home)</span>
+                  <span>{t("மூடு", "Close")}</span>
                 </button>
               </div>
 
-              <div className="flex items-center gap-2 text-emerald-400 text-xs font-extrabold">
-                <Lock className="h-4 w-4" />
-                <span>பாதுகாப்பான கட்டண வாயில் (256-bit SSL Gateway)</span>
+              <div className="flex items-center gap-2 text-emerald-800 text-xs font-bold">
+                <Lock className="h-4 w-4 text-emerald-700" />
+                <span>Razorpay Secured (UPI / Cards / NetBanking)</span>
               </div>
             </div>
 
             {/* Checkout Main Layout */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               
               {/* Left Column: Order Summary */}
-              <div className="lg:col-span-5 space-y-4 bg-slate-950/80 border border-slate-800 p-5 rounded-2xl">
+              <div className="lg:col-span-5 space-y-4 bg-[#FAF9F6] border border-stone-200 p-5 rounded-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-indigo-400 uppercase tracking-wider">தேர்ந்தெடுக்கப்பட்ட திட்டம்</span>
-                  <span className="px-2.5 py-0.5 bg-amber-400 text-slate-950 text-[10px] font-black uppercase rounded">
+                  <span className="text-xs font-mono font-bold text-stone-600 uppercase tracking-wider">தேர்ந்தெடுக்கப்பட்ட திட்டம்</span>
+                  <span className="px-2 py-0.5 bg-stone-200 text-stone-900 text-[10px] font-mono font-bold uppercase rounded border border-stone-300">
                     {targetPlan.badge}
                   </span>
                 </div>
 
-                <div className="border-b border-slate-800 pb-4">
-                  <h3 className="text-xl font-black text-white">{targetPlan.nameTamil}</h3>
-                  <p className="text-xs text-slate-400 mt-1 font-medium">{targetPlan.description}</p>
+                <div className="border-b border-stone-200 pb-4">
+                  <h3 className="text-xl font-black text-stone-950">{targetPlan.nameTamil}</h3>
+                  <p className="text-xs text-stone-600 mt-1 font-normal">{targetPlan.description}</p>
                 </div>
 
-                <div className="space-y-2 text-xs font-medium text-slate-300 border-b border-slate-800 pb-4">
+                <div className="space-y-2 text-xs font-medium text-stone-700 border-b border-stone-200 pb-4">
                   <div className="flex justify-between">
                     <span>அடிப்படை கட்டணம் (Base Price):</span>
-                    <span className="font-mono text-white font-bold">₹{basePrice}</span>
+                    <span className="font-mono text-stone-950 font-bold">₹{basePrice}</span>
                   </div>
-                  <div className="flex justify-between text-slate-400">
+                  <div className="flex justify-between text-stone-500">
                     <span>ஜி.எஸ்.டி (18% GST):</span>
                     <span className="font-mono">₹{gstAmount}</span>
                   </div>
-                  <div className="flex justify-between text-sm font-black text-amber-400 pt-2 border-t border-slate-800">
+                  <div className="flex justify-between text-sm font-black text-stone-950 pt-2 border-t border-stone-200">
                     <span>மொத்த கட்டணம் (Total Payable):</span>
-                    <span className="font-mono text-lg">₹{totalPrice}</span>
+                    <span className="font-mono text-lg text-purple-900">₹{totalPrice}</span>
                   </div>
                 </div>
 
                 <div className="space-y-2 pt-2">
-                  <p className="text-[10px] font-black uppercase text-slate-400">திட்டத்தின் சிறப்பம்சங்கள்:</p>
+                  <p className="text-[10px] font-mono font-bold uppercase text-stone-500">திட்டத்தின் சிறப்பம்சங்கள்:</p>
                   {targetPlan.features.slice(0, 4).map((f, idx) => (
-                    <div key={idx} className="flex items-center gap-2 text-xs text-slate-300 font-medium">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    <div key={idx} className="flex items-center gap-2 text-xs text-stone-700 font-medium">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700 shrink-0" />
                       <span>{f}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Right Column: Payment Method Selection & Forms */}
+              {/* Right Column: Razorpay Checkout Panel */}
               <div className="lg:col-span-7 space-y-5">
                 
-                {/* Method Selector Tabs */}
-                <div className="flex rounded-xl bg-slate-950 p-1 border border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPaymentMethod("upi");
-                      setPaymentError(null);
-                    }}
-                    className={`flex-1 py-2.5 text-xs font-extrabold rounded-lg transition flex items-center justify-center gap-2 cursor-pointer ${
-                      paymentMethod === "upi"
-                        ? "bg-indigo-600 text-white shadow-md"
-                        : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    <QrCode className="h-4 w-4" />
-                    <span>GPay / PhonePe / UPI</span>
-                  </button>
+                <div className="p-5 rounded-xl bg-white border border-stone-200 space-y-4 shadow-2xs">
+                  <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-stone-900 text-white flex items-center justify-center font-black text-xs">
+                        R
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-stone-900">Razorpay Payment Gateway</h4>
+                        <p className="text-[11px] text-stone-500">Official Payment Partner</p>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded text-[10px] font-mono font-bold">
+                      Instant Activation
+                    </span>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPaymentMethod("card");
-                      setPaymentError(null);
-                    }}
-                    className={`flex-1 py-2.5 text-xs font-extrabold rounded-lg transition flex items-center justify-center gap-2 cursor-pointer ${
-                      paymentMethod === "card"
-                        ? "bg-indigo-600 text-white shadow-md"
-                        : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    <CreditCard className="h-4 w-4" />
-                    <span>கார்டு (Card)</span>
-                  </button>
+                  <div className="space-y-2 text-xs text-stone-700">
+                    <p className="font-medium">
+                      {t(
+                        "கீழே உள்ள பட்டனை கிளிக் செய்தவுடன் அதிகாரப்பூர்வ Razorpay கட்டண சாளரம் திறக்கும். அதில் பின்வரும் அனைத்து முறைகளிலும் கட்டணம் செலுத்தலாம்:",
+                        "Click below to open the official Razorpay Checkout popup supporting all standard payment methods:"
+                      )}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div className="p-2.5 rounded-lg bg-[#FAF9F6] border border-stone-200 flex items-center gap-2">
+                        <QrCode className="h-4 w-4 text-purple-900 shrink-0" />
+                        <span className="font-bold text-[11px]">UPI (GPay / PhonePe / Paytm)</span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-[#FAF9F6] border border-stone-200 flex items-center gap-2">
+                        <CreditCard className="h-4 w-4 text-amber-800 shrink-0" />
+                        <span className="font-bold text-[11px]">Credit & Debit Cards (Visa/MC/RuPay)</span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-[#FAF9F6] border border-stone-200 flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-emerald-800 shrink-0" />
+                        <span className="font-bold text-[11px]">Net Banking (All Indian Banks)</span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-[#FAF9F6] border border-stone-200 flex items-center gap-2">
+                        <Smartphone className="h-4 w-4 text-stone-800 shrink-0" />
+                        <span className="font-bold text-[11px]">Wallets & UPI AutoPay</span>
+                      </div>
+                    </div>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPaymentMethod("netbanking");
-                      setPaymentError(null);
-                    }}
-                    className={`flex-1 py-2.5 text-xs font-extrabold rounded-lg transition flex items-center justify-center gap-2 cursor-pointer ${
-                      paymentMethod === "netbanking"
-                        ? "bg-indigo-600 text-white shadow-md"
-                        : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    <Building2 className="h-4 w-4" />
-                    <span>வங்கி நெட்பேங்கிங்</span>
-                  </button>
+                  {gatewayConfig?.isTestMode && (
+                    <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-900 font-medium flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4 text-amber-800 shrink-0" />
+                      <span>Sandbox / Test Mode is active. Payments will be simulated and verified instantly.</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* ERROR ALERT DISPLAY */}
                 {paymentError && (
-                  <div className="p-3.5 bg-rose-500/20 border border-rose-500/60 rounded-xl text-rose-300 text-xs font-bold flex items-start gap-2.5 animate-in fade-in zoom-in-95 duration-150">
-                    <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-xl text-rose-800 text-xs font-bold flex items-start gap-2.5">
+                    <AlertTriangle className="h-4 w-4 text-rose-700 shrink-0 mt-0.5" />
                     <span className="leading-snug">{paymentError}</span>
-                  </div>
-                )}
-
-                {/* UPI / QR CODE METHOD */}
-                {paymentMethod === "upi" && (
-                  <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 space-y-4">
-                    <div className="flex flex-col sm:flex-row items-center gap-5">
-                      {/* Simulated QR Box */}
-                      <div className="w-36 h-36 bg-white p-2 rounded-2xl border-2 border-indigo-500 shrink-0 flex flex-col items-center justify-center relative shadow-lg">
-                        <div className="w-full h-full border border-dashed border-slate-300 flex items-center justify-center bg-slate-50 rounded-xl">
-                          <QrCode className="h-20 w-20 text-slate-900" />
-                        </div>
-                        <span className="text-[9px] font-black text-slate-900 mt-1 uppercase">NILAM360 UPI</span>
-                      </div>
-
-                      <div className="space-y-3 flex-1 text-center sm:text-left">
-                        <span className="text-xs font-black text-amber-400 uppercase tracking-wider block">
-                          1. QR குறியீட்டை ஸ்கேன் செய்து கட்டணம் செலுத்தலாம்
-                        </span>
-                        <p className="text-xs text-slate-300 font-medium">
-                          கூகுள் பே (GPay), போன்பே (PhonePe), பேடிஎம் (Paytm) அல்லது பீம் (BHIM) செயலியைப் பயன்படுத்தி மேலுள்ள QR ஐ ஸ்கேன் செய்யவும்.
-                        </p>
-
-                        <div className="flex items-center justify-between bg-slate-900 p-2.5 rounded-xl border border-slate-800 text-xs">
-                          <span className="font-mono text-indigo-300 font-bold">nilam360.pay@upi</span>
-                          <button
-                            type="button"
-                            onClick={handleCopyUpi}
-                            className="px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 text-[10px] font-black rounded transition flex items-center gap-1 cursor-pointer"
-                          >
-                            <Copy className="h-3 w-3" />
-                            <span>{copiedUpi ? "நகலெடுக்கப்பட்டது!" : "நகலெடு"}</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="border-t border-slate-800 pt-4 space-y-2">
-                      <label className="text-xs font-bold text-slate-300 block">
-                        2. கட்டணம் செலுத்திய பின் பெற்ற 12-இலக்க UPI குறிப்பு எண்ணை உள்ளிடவும் (Ref / UTR No)*:
-                      </label>
-                      <input
-                        type="text"
-                        value={upiRef}
-                        onChange={(e) => {
-                          setUpiRef(e.target.value);
-                          if (paymentError) setPaymentError(null);
-                        }}
-                        placeholder="எ.கா: 428901823901"
-                        className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* CARD METHOD */}
-                {paymentMethod === "card" && (
-                  <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 space-y-4">
-                    <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-300">கார்டு எண் (Card Number)*:</label>
-                      <input
-                        type="text"
-                        value={cardNumber}
-                        onChange={(e) => {
-                          setCardNumber(e.target.value);
-                          if (paymentError) setPaymentError(null);
-                        }}
-                        placeholder="4532 •••• •••• 8912"
-                        className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-slate-300">காலாவதி தேதி (MM/YY)*:</label>
-                        <input
-                          type="text"
-                          value={cardExpiry}
-                          onChange={(e) => {
-                            setCardExpiry(e.target.value);
-                            if (paymentError) setPaymentError(null);
-                          }}
-                          placeholder="08/28"
-                          className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-400"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-slate-300">சி.வி.வி (CVV)*:</label>
-                        <input
-                          type="password"
-                          maxLength={3}
-                          value={cardCvv}
-                          onChange={(e) => {
-                            setCardCvv(e.target.value);
-                            if (paymentError) setPaymentError(null);
-                          }}
-                          placeholder="•••"
-                          className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-400"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-300">கார்டில் உள்ள பெயர் (Cardholder Name)*:</label>
-                      <input
-                        type="text"
-                        value={cardName}
-                        onChange={(e) => {
-                          setCardName(e.target.value);
-                          if (paymentError) setPaymentError(null);
-                        }}
-                        placeholder="எ.கா: K. RAMESH KUMAR"
-                        className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* NETBANKING METHOD */}
-                {paymentMethod === "netbanking" && (
-                  <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 space-y-4">
-                    <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-300 block">
-                        1. உங்கள் வங்கியைத் தேர்ந்தெடுக்கவும் (Select Bank)*:
-                      </label>
-                      <select
-                        value={selectedBank}
-                        onChange={(e) => setSelectedBank(e.target.value)}
-                        className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-xs font-bold text-white focus:outline-none focus:border-amber-400"
-                      >
-                        <option value="SBI">State Bank of India (ஸ்டேட் பேங்க்)</option>
-                        <option value="INDIAN_BANK">Indian Bank (இந்தியன் பேங்க்)</option>
-                        <option value="IOB">Indian Overseas Bank (ஐ.ஓ.பி)</option>
-                        <option value="HDFC">HDFC Bank</option>
-                        <option value="ICICI">ICICI Bank</option>
-                        <option value="AXIS">Axis Bank</option>
-                        <option value="CANARA">Canara Bank</option>
-                      </select>
-                    </div>
-
-                    <div className="space-y-1 border-t border-slate-800 pt-3">
-                      <label className="text-xs font-bold text-slate-300 block">
-                        2. நெட்பேங்கிங் பயனர் / வாடிக்கையாளர் ஐடி (Customer ID / User ID)*:
-                      </label>
-                      <input
-                        type="text"
-                        value={netbankingUserId}
-                        onChange={(e) => {
-                          setNetbankingUserId(e.target.value);
-                          if (paymentError) setPaymentError(null);
-                        }}
-                        placeholder="எ.கா: CUST982130"
-                        className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
                   </div>
                 )}
 
                 {/* Execute Payment Button */}
                 <button
                   type="button"
-                  onClick={handleExecutePayment}
+                  onClick={handleExecuteRazorpay}
                   disabled={isProcessing}
-                  className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-slate-950 font-black text-sm uppercase tracking-wider shadow-xl shadow-amber-500/20 transition duration-200 cursor-pointer flex items-center justify-center gap-3 border border-amber-300 active:scale-95 disabled:opacity-50"
+                  className="w-full py-4 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-50 font-bold text-sm uppercase tracking-wider shadow-sm transition duration-150 cursor-pointer flex items-center justify-center gap-3 border border-stone-950 active:scale-95 disabled:opacity-50"
                 >
                   {isProcessing ? (
                     <>
-                      <svg className="animate-spin h-5 w-5 text-slate-950" viewBox="0 0 24 24" fill="none">
+                      <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24" fill="none">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
@@ -640,21 +448,21 @@ export function PricingModal({
                     </>
                   ) : (
                     <>
-                      <Zap className="h-5 w-5 fill-current" />
-                      <span>₹{totalPrice} கட்டணம் செலுத்து & திட்டத்தை உயர்த்து</span>
+                      <Zap className="h-4 w-4 fill-amber-400 text-amber-400" />
+                      <span>₹{totalPrice} {t("கட்டணம் செலுத்து (Pay with Razorpay)", "Pay with Razorpay")}</span>
                     </>
                   )}
                 </button>
 
-                {/* Cancel & Return to Home Button */}
+                {/* Cancel & Return Button */}
                 {!isProcessing && (
                   <button
                     type="button"
                     onClick={onClose}
-                    className="w-full py-2.5 text-xs font-bold text-slate-400 hover:text-amber-300 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="w-full py-2 text-xs font-bold text-stone-600 hover:text-stone-900 transition flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <ArrowLeft className="h-3.5 w-3.5" />
-                    <span>ரத்து செய்து முகப்புப் பக்கத்திற்குத் திரும்பு (Cancel & Return to Home)</span>
+                    <span>{t("ரத்து செய்து முகப்புக்குத் திரும்பு", "Cancel & Return to Home")}</span>
                   </button>
                 )}
 
@@ -665,40 +473,43 @@ export function PricingModal({
 
         {/* STEP 3: SUCCESSFUL PAYMENT RECEIPT & UPGRADE CONFIRMATION */}
         {step === "success" && (
-          <div className="p-8 text-center space-y-6 animate-in fade-in zoom-in-95 duration-300">
-            <div className="w-20 h-20 bg-emerald-500/20 border-2 border-emerald-500 text-emerald-400 rounded-3xl flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/20">
-              <CheckCircle2 className="h-10 w-10" />
+          <div className="p-8 text-center space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 bg-emerald-50 border-2 border-emerald-600 text-emerald-700 rounded-2xl flex items-center justify-center mx-auto shadow-2xs">
+              <CheckCircle2 className="h-8 w-8" />
             </div>
 
             <div>
-              <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-xs font-black uppercase">
-                பரிவர்த்தனை வெற்றி பெற்றதைக் குறிக்கிறது
+              <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-md text-xs font-mono font-bold uppercase">
+                Payment Captured & Verified
               </span>
-              <h2 className="text-2xl sm:text-3xl font-black text-white mt-3">
-                கட்டணம் வெற்றிகரமாகச் செலுத்தப்பட்டது! 🎉
+              <h2 className="text-2xl sm:text-3xl font-black text-stone-950 mt-3">
+                {t("கட்டணம் வெற்றிகரமாகச் செலுத்தப்பட்டது! 🎉", "Payment Successful & Plan Upgraded! 🎉")}
               </h2>
-              <p className="text-xs sm:text-sm text-slate-300 font-medium mt-1 max-w-md mx-auto">
-                உங்கள் நிலம்360 AI கணக்கு உடனடியாக <strong>{targetPlan.nameTamil}</strong>க்கு உயர்த்தப்பட்டது.
+              <p className="text-xs sm:text-sm text-stone-600 font-medium mt-1 max-w-md mx-auto">
+                {t(
+                  `உங்கள் Unikorn360 AI கணக்கு உடனடியாக ${targetPlan.nameTamil}க்கு உயர்த்தப்பட்டது.`,
+                  `Your Unikorn360 account has been instantly upgraded to ${targetPlan.nameEnglish}.`
+                )}
               </p>
             </div>
 
             {/* Receipt Box */}
-            <div className="max-w-md mx-auto bg-slate-950 border border-slate-800 rounded-2xl p-5 text-left space-y-3 font-mono text-xs text-slate-300">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-[11px]">
-                <span className="font-bold text-slate-400 uppercase">ரசீது எண்: {lastTxnId}</span>
-                <span className="text-emerald-400 font-black">PAID</span>
+            <div className="max-w-md mx-auto bg-[#FAF9F6] border border-stone-200 rounded-xl p-5 text-left space-y-3 font-mono text-xs text-stone-800">
+              <div className="flex items-center justify-between border-b border-stone-200 pb-2 text-[11px]">
+                <span className="font-bold text-stone-600 uppercase">TXN REF: {lastTxnId}</span>
+                <span className="text-emerald-800 font-bold bg-emerald-100 px-2 py-0.5 rounded">PAID</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">திட்டம்:</span>
-                <span className="font-bold text-white">{targetPlan.nameTamil}</span>
+                <span className="text-stone-500">திட்டம்:</span>
+                <span className="font-bold text-stone-900">{targetPlan.nameTamil}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">செலுத்தப்பட்ட தொகை:</span>
-                <span className="font-bold text-amber-400">₹{totalPrice} (Incl. GST)</span>
+                <span className="text-stone-500">செலுத்தப்பட்ட தொகை:</span>
+                <span className="font-bold text-purple-900">₹{totalPrice} (Incl. 18% GST)</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">தேதி & நேரம்:</span>
-                <span className="text-slate-300">{new Date().toLocaleString('ta-IN')}</span>
+                <span className="text-stone-500">தேதி & நேரம்:</span>
+                <span className="text-stone-700">{new Date().toLocaleString('en-IN')}</span>
               </div>
             </div>
 
@@ -706,10 +517,10 @@ export function PricingModal({
               <button
                 type="button"
                 onClick={handleFinalizeUpgrade}
-                className="w-full sm:w-auto px-8 py-4 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-sm uppercase tracking-wider shadow-xl shadow-amber-400/20 transition cursor-pointer inline-flex items-center justify-center gap-2 border border-amber-300"
+                className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-50 font-bold text-sm uppercase tracking-wider transition cursor-pointer inline-flex items-center justify-center gap-2 border border-stone-950"
               >
-                <span>நிலம்360 AI முகப்புப் பக்கத்திற்குச் செல்</span>
-                <ArrowRight className="h-5 w-5" />
+                <span>{t("முகப்புப் பக்கத்திற்குச் செல்", "Go to Dashboard / Workspace")}</span>
+                <ArrowRight className="h-4 w-4" />
               </button>
             </div>
           </div>
@@ -719,4 +530,3 @@ export function PricingModal({
     </div>
   );
 }
-
